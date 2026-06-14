@@ -51,12 +51,14 @@ class fifo_seq extends uvm_sequence #(fifo_txn);
   function new(string name = "fifo_seq"); super.new(name); endfunction
 
   task body();
-    repeat (50) begin
+    bit [7:0] wr_vals[] = '{8'h00, 8'hFF, 8'h3A, 8'h7F, 8'h80};  // 含两个角点
+    foreach (wr_vals[i]) begin
       fifo_txn tr = fifo_txn::type_id::create("tr");
-      start_item(tr);               // 握手①:申请通道, 阻塞等 driver 来要
-      assert(tr.randomize() with {op ==WR;}); // 拿到通道后再随机填 data
-      finish_item(tr);                  // 握手②:交付, 阻塞等 driver 说"处理完了"
-      `uvm_info("SEQ", $sformatf("SEND data=0x%02h", tr.data),UVM_MEDIUM)
+      start_item(tr);
+      tr.op   = WR;
+      tr.data = wr_vals[i];        // 直接指定, 不随机
+      finish_item(tr);
+      `uvm_info("SEQ", $sformatf("WRITE 0x%02h", tr.data), UVM_MEDIUM)
     end
     repeat (5) begin
       fifo_txn tr = fifo_txn::type_id::create("tr");
@@ -319,7 +321,10 @@ endclass
 module top;
   logic clk = 0;
   always #5 clk = ~clk;
-  initial begin $dumpfile("dump.vcd"); $dumpvars; end
+  initial begin
+    $fsdbDumpfile("fifo.fsdb");   // 起名: 文件
+    $fsdbDumpvars(0, top);        // ★ 录信号: 是 DumpVARS, 不是 DumpFILE ★
+  end
 
   fifo_if vif (clk);
   sync_fifo #(.WIDTH(8), .DEPTH(8)) dut (
