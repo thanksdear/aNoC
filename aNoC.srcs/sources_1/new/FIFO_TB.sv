@@ -1,21 +1,20 @@
 `timescale 1ns/1ns
 module test ;
 
-reg       clk   ;
-reg       rst_n ;
-reg       wr_en ;
-reg       rd_en ;
-wire  [7:0]  r_data;  // 修复：应该是8位
-reg   [7:0]  w_data;  // 修复：应该是8位
-wire       full;
-wire       empty;
+reg             clk   ;
+reg             rst_n ;
+reg             wr_en ;
+reg             rd_en ;
+wire  [7:0]     r_data;  
+reg   [7:0]     w_data;  
+wire            full  ;
+wire            empty ;
 
 initial begin
     clk = 0;
     forever #5 clk = ~clk;
 end
 
-// 移除自动递增逻辑，改为手动控制以便更灵活的测试
 
 FIFO #(
     .DATA_WIDTH ( 8  ),

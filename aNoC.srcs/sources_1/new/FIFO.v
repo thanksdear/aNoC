@@ -18,12 +18,13 @@
 // Additional Comments:
 // 
 //////////////////////////////////////////////////////////////////////////////////
-
-
+//异步FIFO，满信号是写时钟域跟同步后的读时钟域格雷码做比较
+//空信号是读时钟域指针跟同步后的写时钟域格雷码做比较
+//边写边读的时候，读信号至少晚三个周期，这是异步打了两拍导致的。
 module FIFO #(
     parameter DATA_WIDTH = 8,       // 数据位宽
     parameter ADDR_WIDTH = 4,       // 地址位宽 (深度 = 2^ADDR_WIDTH)
-    parameter DEPTH      = 16      // FIFO 深度
+    parameter DEPTH      = (1 << (ADDR_WIDTH)) -1     // FIFO 深度
     )(
  // Write Domain
     input   wire    wr_clk,
