@@ -1,5 +1,5 @@
 //同步FIFO
-module syn_fifo #(
+module sync_fifo #(
     parameter WIDTH = 8,       // 数据位宽
     parameter DEPTH = 8    // FIFO 深度
     )(
