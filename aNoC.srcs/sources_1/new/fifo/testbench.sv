@@ -34,10 +34,13 @@ typedef enum bit {WR, RD} op_e;
 class fifo_txn extends uvm_sequence_item;
   rand op_e      op;
   rand bit [7:0] data;                  // 要写的数据, rand = 可被随机
-
+  bit       full;
+  bit       empty;
   `uvm_object_utils_begin(fifo_txn)
   	`uvm_field_enum(op_e, op, UVM_ALL_ON)
     `uvm_field_int(data, UVM_ALL_ON)    // 注册字段 → 白送 print/copy/compare
+    `uvm_field_int(full, UVM_ALL_ON)    // 注册字段 → 白送 print/copy/compare
+    `uvm_field_int(empty, UVM_ALL_ON)    // 注册字段 → 白送 print/copy/compare
   `uvm_object_utils_end
 
   function new(string name = "fifo_txn");
@@ -114,7 +117,7 @@ endclass
 class fifo_coverage	extends uvm_subscriber #(fifo_txn);
   `uvm_component_utils(fifo_coverage)
   
-  covergroup cg with function sample(op_e op ,bit [7:0] data);
+  covergroup cg with function sample(op_e op ,bit [7:0] data,bit full ,bit empty);
   	cp_op:	coverpoint	op;
     cp_data:coverpoint	data{
       bins zero = {8'h00};
@@ -122,7 +125,19 @@ class fifo_coverage	extends uvm_subscriber #(fifo_txn);
       bins high = {[8'h80:8'hFE]};
       bins allone = {8'hff};
     }
+	cp_full:coverpoint full;  
+	cp_empty:coverpoint empty;
     x_op_data:cross cp_op,cp_data;
+	
+	x_overflow:cross cp_op ,cp_full{
+		bins write_when_full = binsof(cp_op) intersect {WR} &&
+							   binsof(cp_full) intersect {1};
+	}
+	
+	x_underflow:cross cp_op ,cp_empty{
+		bins read_when_empty = binsof(cp_op) intersect {RD} &&
+							   binsof(cp_empty) intersect {1};
+	}
   endgroup
   
   function new(string name, uvm_component parent);
@@ -131,7 +146,7 @@ class fifo_coverage	extends uvm_subscriber #(fifo_txn);
   endfunction
   
   function void write(fifo_txn t);
-    cg.sample(t.op, t.data);                // 采样: 把这笔的 op/data 喂进各 coverpoint
+    cg.sample(t.op, t.data,t.full,t.empty);                // 采样: 把这笔的 op/data 喂进各 coverpoint
   endfunction
   
   function void report_phase(uvm_phase phase);
@@ -167,10 +182,12 @@ class fifo_monitor extends uvm_monitor;
 task watch_writes();
     forever begin
       @(vif.mon_cb);
-      if (vif.rst_n && vif.mon_cb.wr_en && !vif.mon_cb.full) begin
+      if (vif.rst_n && vif.mon_cb.wr_en ) begin
         fifo_txn tr = fifo_txn::type_id::create("wr_obs");
         tr.data = vif.mon_cb.wr_data;
         tr.op   = WR;
+		tr.full = vif.mon_cb.full;
+		tr.empty = vif.mon_cb.empty;		
         `uvm_info("MON", $sformatf("OBSERVE Write data=0x%02h", tr.data), UVM_MEDIUM)
         ap.write(tr);
       end
@@ -180,10 +197,12 @@ task watch_writes();
   task watch_reads();
     forever begin
       @(vif.mon_cb);
-      if (vif.rst_n && vif.mon_cb.rd_en && !vif.mon_cb.empty) begin
+      if (vif.rst_n && vif.mon_cb.rd_en ) begin
         fifo_txn tr = fifo_txn::type_id::create("rd_obs");
         tr.data = vif.mon_cb.rd_data;
         tr.op   = RD;
+		tr.full = vif.mon_cb.full;
+		tr.empty = vif.mon_cb.empty;
         `uvm_info("MON", $sformatf("OBSERVE Read data=0x%02h", tr.data), UVM_MEDIUM)
         ap.write(tr);
       end
@@ -197,14 +216,13 @@ class fifo_sb extends uvm_scoreboard;
   uvm_analysis_imp #(fifo_txn,fifo_sb) ain;
   bit [7:0] ref_q[$];
   int n_pass ,n_fail;
-  
   function new(string name, uvm_component parent);
     super.new(name, parent);
     ain = new("ain", this);    // imp 在构造里建好, 绑到 this(我来实现 write)
   endfunction
   
   function void write(fifo_txn tr);
-    if(tr.op == WR) begin
+    if(tr.op == WR) begin	
       ref_q.push_back(tr.data); // 入队
       `uvm_info("SB",$sformatf("INQUENE 0x%02h (deep=%0d)",tr.data,ref_q.size()),UVM_MEDIUM)
     end
