@@ -186,8 +186,8 @@ task watch_writes();
         fifo_txn tr = fifo_txn::type_id::create("wr_obs");
         tr.data = vif.mon_cb.wr_data;
         tr.op   = WR;
-		tr.full = vif.mon_cb.full;
-		tr.empty = vif.mon_cb.empty;		
+        tr.full = vif.mon_cb.full;
+        tr.empty = vif.mon_cb.empty;		
         `uvm_info("MON", $sformatf("OBSERVE Write data=0x%02h", tr.data), UVM_MEDIUM)
         ap.write(tr);
       end
@@ -201,8 +201,8 @@ task watch_writes();
         fifo_txn tr = fifo_txn::type_id::create("rd_obs");
         tr.data = vif.mon_cb.rd_data;
         tr.op   = RD;
-		tr.full = vif.mon_cb.full;
-		tr.empty = vif.mon_cb.empty;
+        tr.full = vif.mon_cb.full;
+        tr.empty = vif.mon_cb.empty;
         `uvm_info("MON", $sformatf("OBSERVE Read data=0x%02h", tr.data), UVM_MEDIUM)
         ap.write(tr);
       end
