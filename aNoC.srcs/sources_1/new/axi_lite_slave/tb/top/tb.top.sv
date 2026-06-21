@@ -1,4 +1,4 @@
-// ---------- top (不变) ----------
+// ---------- top ----------
 import axi_lite_slave_pkg::*;
 module top;
   logic clk = 0;
