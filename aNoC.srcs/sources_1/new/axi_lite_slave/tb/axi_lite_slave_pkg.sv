@@ -1,7 +1,6 @@
-
+`include "uvm_macros.svh"
 package axi_lite_slave_pkg;
-   import uvm_pkg::*; 
-   `include "uvm_macros.svh"
+   import uvm_pkg::*;
    `include "env/axi_lite_slave_txn.sv"
    `include "env/axi_lite_slave_seq.sv"
    `include "env/axi_lite_slave_driver.sv"

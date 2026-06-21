@@ -1,4 +1,6 @@
 // ---------- top ----------
+`include "uvm_macros.svh"
+import uvm_pkg::*;
 import axi_lite_slave_pkg::*;
 module top;
   logic clk = 0;
