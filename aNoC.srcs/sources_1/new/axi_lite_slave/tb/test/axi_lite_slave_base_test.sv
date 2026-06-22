@@ -23,6 +23,7 @@ class axi_lite_slave_base_test extends uvm_test;
 
   task run_phase(uvm_phase phase);
     axi_lite_slave_seq seq;
+    axi_lite_slave_write_seq seq_wr;
     phase.raise_objection(this);
     vif.rst_n = 0;
     repeat (2) @(posedge vif.clk);
@@ -30,7 +31,9 @@ class axi_lite_slave_base_test extends uvm_test;
     @(posedge vif.clk);
 
     seq = axi_lite_slave_seq::type_id::create("seq");
+    seq_wr = axi_lite_slave_write_seq::type_id::create("seq_wr");
     seq.start(env.agt.sqr);          // ← 唯一变的路径:经 env.agt 找 sequencer
+    seq_wr.start(env.agt.sqr);
     repeat (3) @(posedge vif.clk);
     phase.drop_objection(this);
   endtask
