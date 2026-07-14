@@ -165,7 +165,6 @@ always_ff @(posedge clk or negedge rst_n) begin
 
         // 写数据：消耗 TX byte 并递减计数
         if (state == S_DATA_WR && cmd_issued && ser_byte_done) begin
-            tx_ready <= 1'b1;
             byte_cnt_r <= byte_cnt_r - 8'd1;
         end
 
@@ -185,7 +184,10 @@ always_ff @(posedge clk or negedge rst_n) begin
 end
 
 // 组合输出
-
+assign tx_ready =(state == S_DATA_WR) &&
+    !cmd_issued &&
+    ser_cmd_ready &&
+    tx_valid;
 assign xfer_ready = (state == S_IDLE);
 
 // 条件满足时向 serializer 发命令

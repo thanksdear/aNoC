@@ -1,12 +1,14 @@
 // ---------- top ----------
 `include "uvm_macros.svh"
+import uvm_pkg::*;
 import i3c_pkg::*;
 module top;
   logic clk = 0;
   always #5 clk = ~clk;
-
-  $fsdbDumpfile("i3c.fsdb");
-  $fsdbDumpvars(0, top);
+  initial begin
+    $fsdbDumpfile("i3c.fsdb");
+    $fsdbDumpvars(0, top);
+  end
   i3c_if vif (clk);
 
   assign vif.scl_in = vif.scl_oe ? vif.scl_out : 1'b1;

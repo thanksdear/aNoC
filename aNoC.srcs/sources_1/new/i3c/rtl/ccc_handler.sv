@@ -255,7 +255,6 @@ always_ff @(posedge clk or negedge rst_n) begin
 
         // Data TX
         if (state == S_DATA_TX && cmd_issued && ser_byte_done) begin
-            tx_ready <= 1'b1;
             byte_cnt_r <= byte_cnt_r - 8'd1;
         end
 
@@ -275,7 +274,9 @@ always_ff @(posedge clk or negedge rst_n) begin
 end
 
 // 组合输出
-
+assign tx_ready =(state == S_DATA_WR) &&!cmd_issued &&
+    ser_cmd_ready &&
+    tx_valid;
 assign ccc_ready    = (state == S_IDLE);
 
 // entdaa_start 在 S_ENTDAA_RUN 首周期有效

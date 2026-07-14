@@ -188,7 +188,10 @@ class i3c_apb_strb_seq extends i3c_seq;
     bit [31:0] exp;
 
     wdata = {8'h10 + strb, 8'h20 + strb, 8'h30 + strb, 8'h40 + strb};
-    exp = apply_strb_zero(wdata, strb);
+    apb_read(REG_BUS_TIMING_0, exp);
+    for (int i = 0; i < 4; i++)
+      if (strb[i])
+        exp[i*8 +: 8] = wdata[i*8 +: 8];
     send_apb(WR, REG_BUS_TIMING_0, wdata, strb);
     apb_read(REG_BUS_TIMING_0, rdata);
     expect_eq($sformatf("APB STRB BUS_TIMING_0 strb_%04b", strb), rdata, exp);
