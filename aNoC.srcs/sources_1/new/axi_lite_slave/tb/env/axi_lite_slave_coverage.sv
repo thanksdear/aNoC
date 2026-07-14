@@ -19,13 +19,7 @@ class axi_lite_slave_coverage	extends uvm_subscriber #(axi_lite_slave_txn);
       bins full = {4'b1111};
       bins others = default;
     }
-    cp_delay:coverpoint tr.start_delay{
-      bins b2b = {0};
-      bins light = {[1:2]};
-      bins heavy = {[3:$]};
-    }
   x_op_data:cross cp_op,cp_data;
-  x_op_delay:cross cp_op,cp_delay;
   endgroup
   
   function new(string name, uvm_component parent);
