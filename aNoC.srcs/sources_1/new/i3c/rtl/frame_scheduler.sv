@@ -124,13 +124,11 @@ always_ff @(posedge clk or negedge rst_n) begin
         cmd_issued  <= 1'b0;
         rx_byte     <= '0;
         rx_valid    <= 1'b0;
-        tx_ready    <= 1'b0;
         xfer_done   <= 1'b0;
         xfer_nack   <= 1'b0;
     end else begin
         // pulse 信号默认每周期清零
         rx_valid  <= 1'b0;
-        tx_ready  <= 1'b0;
         xfer_done <= 1'b0;
         xfer_nack <= 1'b0;
 

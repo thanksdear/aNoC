@@ -84,10 +84,19 @@ class i3c_bus_scoreboard extends uvm_scoreboard;
   bit [7:0] tx_data_q[$];
   bit [7:0] observed_read_data_q[$];
 
+  virtual i3c_if vif;
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+
+    if (!uvm_config_db#(virtual i3c_if)::get(this, "", "vif", vif))
+      `uvm_fatal("I3C_SB", "cannot get vif")
+  endfunction
   typedef struct {
     bit [6:0] addr;
     bit       rw;
     bit [7:0] length;
+    bit       expect_addr_ack;
   } expected_cmd_t;
 
   expected_cmd_t expected_cmd_q[$];
@@ -122,7 +131,7 @@ class i3c_bus_scoreboard extends uvm_scoreboard;
           cmd.addr   = apb_tr.data[23:17];
           cmd.rw     = apb_tr.data[16];
           cmd.length = apb_tr.data[31:24];
-
+          cmd.expect_addr_ack = vif.slave_ack_addr;
           expected_cmd_q.push_back(cmd);
         end
       end
@@ -188,8 +197,15 @@ class i3c_bus_scoreboard extends uvm_scoreboard;
         )
       )
 
-    if (!actual.addr_ack)
-      `uvm_error("I3C_SB", "Target did not ACK address")
+    if (actual.addr_ack !== expected.expect_addr_ack)
+      `uvm_error(
+        "I3C_SB",
+        $sformatf(
+          "Address ACK mismatch: actual=%0b expected=%0b",
+          actual.addr_ack,
+          expected.expect_addr_ack
+        )
+      )
 
     if (!actual.stop_seen)
       `uvm_error("I3C_SB", "I3C transaction has no STOP")

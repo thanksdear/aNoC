@@ -202,12 +202,10 @@ always_ff @(posedge clk or negedge rst_n) begin
         entdaa_kicked <= 1'b0;
         rx_byte       <= '0;
         rx_valid      <= 1'b0;
-        tx_ready      <= 1'b0;
         ccc_done      <= 1'b0;
         ccc_nack      <= 1'b0;
     end else begin
         rx_valid  <= 1'b0;
-        tx_ready  <= 1'b0;
         ccc_done  <= 1'b0;
         ccc_nack  <= 1'b0;
 
@@ -274,7 +272,7 @@ always_ff @(posedge clk or negedge rst_n) begin
 end
 
 // 组合输出
-assign tx_ready =(state == S_DATA_WR) &&!cmd_issued &&
+assign tx_ready =(state == S_DATA_TX) &&!cmd_issued &&
     ser_cmd_ready &&
     tx_valid;
 assign ccc_ready    = (state == S_IDLE);
