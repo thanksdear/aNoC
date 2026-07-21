@@ -1581,7 +1581,7 @@ class i3c_bus_scoreboard extends uvm_scoreboard;
         report_mismatch(
           $sformatf("ENTDAA round[%0d].start", i),
           actual_round.start_boundary.name(),
-          I3C_BOUNDARY_RESTART.name()
+          "I3C_BOUNDARY_RESTART"
         );
       if (actual_round.end_boundary !=
           (expected_round.expect_da_ack ? I3C_BOUNDARY_RESTART
@@ -1589,8 +1589,8 @@ class i3c_bus_scoreboard extends uvm_scoreboard;
         report_mismatch(
           $sformatf("ENTDAA round[%0d].end", i),
           actual_round.end_boundary.name(),
-          expected_round.expect_da_ack ? I3C_BOUNDARY_RESTART.name()
-                                       : I3C_BOUNDARY_STOP.name()
+          expected_round.expect_da_ack ? "I3C_BOUNDARY_RESTART"
+                                       : "I3C_BOUNDARY_STOP"
         );
 
       check_int($sformatf("ENTDAA round[%0d].header_bit_count", i),
@@ -1653,13 +1653,13 @@ class i3c_bus_scoreboard extends uvm_scoreboard;
         report_mismatch(
           "ENTDAA final round start",
           actual_round.start_boundary.name(),
-          I3C_BOUNDARY_RESTART.name()
+          "I3C_BOUNDARY_RESTART"
         );
       if (actual_round.end_boundary != I3C_BOUNDARY_STOP)
         report_mismatch(
           "ENTDAA final round end",
           actual_round.end_boundary.name(),
-          I3C_BOUNDARY_STOP.name()
+          "I3C_BOUNDARY_STOP"
         );
       check_int("ENTDAA final round header_bit_count",
                 actual_round.header_bit_count, 8);
@@ -1700,7 +1700,7 @@ class i3c_bus_scoreboard extends uvm_scoreboard;
       report_mismatch(
         "transfer origin",
         actual.origin.name(),
-        I3C_ORIGIN_CONTROLLER.name()
+        "I3C_ORIGIN_CONTROLLER"
       );
 
     kind_compatible = (actual.kind == expected.kind);
@@ -1753,10 +1753,10 @@ class i3c_bus_scoreboard extends uvm_scoreboard;
       report_mismatch(
         "IBI origin",
         actual.origin.name(),
-        I3C_ORIGIN_TARGET.name()
+        "I3C_ORIGIN_TARGET"
       );
     if (actual.kind != I3C_KIND_IBI)
-      report_mismatch("IBI kind", actual.kind.name(), I3C_KIND_IBI.name());
+      report_mismatch("IBI kind", actual.kind.name(), "I3C_KIND_IBI");
     check_int("IBI segment count", actual.segments.size(), 1);
     check_int("IBI ENTDAA-round count", actual.entdaa_rounds.size(), 0);
     if (actual.segments.size() == 0)
