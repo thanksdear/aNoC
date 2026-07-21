@@ -4,7 +4,8 @@
 //
 // 传输格式：START + addr_byte + data_bytes[0..N-1] + STOP。
 // START/STOP 直接透传给 serializer，地址和数据使用 SER_BYTE。
-// 地址阶段 NACK 后立即 STOP，并上报 xfer_nack。
+// 地址阶段或 legacy I2C write data 阶段 NACK 后立即 STOP，
+// 并上报 xfer_nack。I3C write 的第9位是 parity T-bit，不作 NACK 处理。
 //
 // cmd_issued 标记当前命令已发出，等待 byte_done 或 passthrough 完成。
 
@@ -30,7 +31,7 @@ module frame_scheduler (
 
     // 传输状态
     output logic        xfer_done,      // 传输完成，已发 STOP
-    output logic        xfer_nack,      // 地址 NACK，已发 STOP
+    output logic        xfer_nack,      // 地址/I2C data NACK，已发 STOP
 
     // Byte serializer 接口
     output logic [1:0]  ser_cmd,
@@ -43,6 +44,7 @@ module frame_scheduler (
     input  logic [7:0]  ser_rx_data,
     input  logic        ser_byte_done,
     input  logic        ser_ack_ok,
+    input  logic        ser_read_continue,
     input  logic        ser_parity_err  // 本模块未使用，留给错误记录
 );
 
@@ -67,7 +69,7 @@ fsched_state_t state, next_state;
 logic [6:0] addr_r;
 logic       rw_r;
 logic [7:0] byte_cnt_r;   // 剩余数据 byte 数
-logic       nack_r;       // 已收到地址 NACK
+logic       nack_r;       // 已收到地址或 I2C data NACK
 logic       cmd_issued;   // 命令已发出，等待完成
 
 // 状态寄存器
@@ -98,13 +100,21 @@ always_comb begin
             end
 
         S_DATA_WR:
-            if (cmd_issued && ser_byte_done && byte_cnt_r == 8'd1)
-                next_state = S_STOP;
-            // cmd_issued 下周期清零后继续发下一个 byte
+            if (cmd_issued && ser_byte_done) begin
+                // serializer 仅在 legacy I2C write data 阶段返回
+                // target ACK/NACK；I3C write data 的 ser_ack_ok 固定为1。
+                if (!ser_ack_ok || byte_cnt_r == 8'd1)
+                    next_state = S_STOP;
+            end
+            // ACK 且仍有 byte 时，cmd_issued 下周期清零后继续
 
         S_DATA_RD:
-            if (cmd_issued && ser_byte_done && byte_cnt_r == 8'd1)
-                next_state = S_STOP;
+            if (cmd_issued && ser_byte_done) begin
+                // I3C target 可在达到命令长度前以 T=0 结束；达到本地
+                // 接收上限时 controller 也会在 T-bit 拉低并结束。
+                if (!ser_read_continue || byte_cnt_r == 8'd1)
+                    next_state = S_STOP;
+            end
 
         S_STOP:
             if (cmd_issued && ser_cmd_ready)
@@ -157,8 +167,11 @@ always_ff @(posedge clk or negedge rst_n) begin
                 cmd_issued <= 1'b0;
         end
 
-        // 地址 NACK 记录
-        if (state == S_ADDR && cmd_issued && ser_byte_done && !ser_ack_ok)
+        // 地址 NACK 或 legacy I2C write data NACK 记录。
+        // I3C write data 时 serializer 会将 ser_ack_ok 强制为1，
+        // 因此 parity T-bit 不会被误报为 NACK。
+        if ((state == S_ADDR || state == S_DATA_WR) &&
+                cmd_issued && ser_byte_done && !ser_ack_ok)
             nack_r <= 1'b1;
 
         // 写数据：消耗 TX byte 并递减计数

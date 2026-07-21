@@ -220,3 +220,557 @@ class i3c_coverage extends uvm_subscriber #(i3c_txn);
     `uvm_info("COV", $sformatf("STATUS coverage: %0.1f%%", cg_status.get_coverage()), UVM_LOW)
   endfunction
 endclass
+
+// Protocol coverage sampled from the passive bus monitor.  Keep this separate
+// from i3c_coverage: the APB transaction describes controller intent, whereas
+// i3c_bus_txn describes what was actually observed on SDA/SCL.
+class i3c_bus_coverage extends uvm_subscriber #(i3c_bus_txn);
+  `uvm_component_utils(i3c_bus_coverage)
+
+  typedef enum bit [1:0] {
+    NINTH_COUNTS_EMPTY,
+    NINTH_COUNTS_ALIGNED,
+    NINTH_COUNTS_MISSING,
+    NINTH_COUNTS_EXTRA
+  } ninth_count_status_e;
+
+  typedef enum bit [2:0] {
+    ENTDAA_ROUND_INCOMPLETE,
+    ENTDAA_ROUND_SUCCESS,
+    ENTDAA_ROUND_FINAL_HEADER_NACK,
+    ENTDAA_ROUND_DA_NACK,
+    ENTDAA_ROUND_MALFORMED
+  } entdaa_round_outcome_e;
+
+  typedef enum bit [1:0] {
+    ENTDAA_PARITY_NOT_PRESENT,
+    ENTDAA_PARITY_GOOD,
+    ENTDAA_PARITY_BAD,
+    ENTDAA_PARITY_UNKNOWN
+  } entdaa_parity_status_e;
+
+  i3c_bus_kind_e       kind_s;
+  i3c_bus_origin_e     origin_s;
+  int unsigned         segment_count_s;
+  int unsigned         entdaa_round_count_s;
+  bit                  has_start_s;
+  bit                  has_restart_s;
+  bit                  has_stop_s;
+  bit                  has_null_segment_s;
+  bit                  has_incomplete_header_s;
+
+  i3c_direction_e      direction_s;
+  i3c_bus_boundary_e   start_boundary_s;
+  i3c_bus_boundary_e   end_boundary_s;
+  int unsigned         payload_len_s;
+  bit                  header_complete_s;
+  logic                addr_ninth_s;
+  ninth_count_status_e ninth_count_status_s;
+
+  logic                data_ninth_s;
+  logic                data_ninth_controller_low_s;
+  logic                data_ninth_target_low_s;
+
+  int unsigned         ibi_mdb_count_s;
+  logic                ibi_header_ninth_s;
+  i3c_bus_boundary_e   ibi_end_boundary_s;
+  logic                ibi_t_s;
+  logic                ibi_controller_t_low_s;
+  logic                ibi_target_t_low_s;
+
+  entdaa_round_outcome_e entdaa_round_outcome_s;
+  entdaa_parity_status_e entdaa_parity_status_s;
+  i3c_bus_boundary_e     entdaa_start_boundary_s;
+  i3c_bus_boundary_e     entdaa_end_boundary_s;
+  logic [7:0]            entdaa_header_s;
+  logic                  entdaa_header_ninth_s;
+
+  covergroup cg_transfer with function sample();
+    option.per_instance = 1;
+
+    cp_kind: coverpoint kind_s {
+      bins tr_kind_unknown   = {I3C_KIND_UNKNOWN};
+      bins tr_kind_private   = {I3C_KIND_PRIVATE};
+      bins tr_kind_broadcast = {I3C_KIND_BROADCAST_CCC};
+      bins tr_kind_direct    = {I3C_KIND_DIRECT_CCC};
+      bins tr_kind_entdaa    = {I3C_KIND_ENTDAA};
+      bins tr_kind_ibi       = {I3C_KIND_IBI};
+    }
+
+    cp_origin: coverpoint origin_s {
+      bins tr_origin_unknown    = {I3C_ORIGIN_UNKNOWN};
+      bins tr_origin_controller = {I3C_ORIGIN_CONTROLLER};
+      bins tr_origin_target     = {I3C_ORIGIN_TARGET};
+    }
+
+    cp_segment_count: coverpoint segment_count_s {
+      bins tr_seg_count_empty = {0};
+      bins tr_seg_count_one   = {1};
+      bins tr_seg_count_two   = {2};
+      bins tr_seg_count_many  = default;
+    }
+
+    cp_entdaa_round_count: coverpoint entdaa_round_count_s {
+      bins tr_entdaa_round_none   = {0};
+      bins tr_entdaa_round_one    = {1};
+      bins tr_entdaa_round_two    = {2};
+      bins tr_entdaa_round_many   = default;
+    }
+
+    cp_has_start: coverpoint has_start_s {
+      bins tr_start_absent  = {0};
+      bins tr_start_present = {1};
+    }
+
+    cp_has_restart: coverpoint has_restart_s {
+      bins tr_restart_absent  = {0};
+      bins tr_restart_present = {1};
+    }
+
+    cp_has_stop: coverpoint has_stop_s {
+      bins tr_stop_absent  = {0};
+      bins tr_stop_present = {1};
+    }
+
+    cp_null_segment: coverpoint has_null_segment_s {
+      bins tr_null_segment_none = {0};
+      bins tr_null_segment_seen = {1};
+    }
+
+    cp_incomplete_header: coverpoint has_incomplete_header_s {
+      bins tr_incomplete_header_none = {0};
+      bins tr_incomplete_header_seen = {1};
+    }
+
+    // Legal initiation combinations.  IBI is target initiated; all currently
+    // supported controller commands are controller initiated.
+    x_kind_origin: cross cp_kind, cp_origin {
+      ignore_bins unknown =
+        binsof(cp_kind.tr_kind_unknown) ||
+        binsof(cp_origin.tr_origin_unknown);
+      ignore_bins controller_ibi =
+        binsof(cp_kind.tr_kind_ibi) &&
+        binsof(cp_origin.tr_origin_controller);
+      ignore_bins target_command =
+        (binsof(cp_kind.tr_kind_private) ||
+         binsof(cp_kind.tr_kind_broadcast) ||
+         binsof(cp_kind.tr_kind_direct) ||
+         binsof(cp_kind.tr_kind_entdaa)) &&
+        binsof(cp_origin.tr_origin_target);
+    }
+
+    // Private, broadcast and target-initiated IBI transfers end without Sr.
+    // Direct CCC and ENTDAA use repeated START in the implemented flows.
+    x_kind_restart: cross cp_kind, cp_has_restart {
+      ignore_bins unknown = binsof(cp_kind.tr_kind_unknown);
+      ignore_bins private_with_restart =
+        binsof(cp_kind.tr_kind_private) &&
+        binsof(cp_has_restart.tr_restart_present);
+      ignore_bins broadcast_with_restart =
+        binsof(cp_kind.tr_kind_broadcast) &&
+        binsof(cp_has_restart.tr_restart_present);
+      ignore_bins direct_without_restart =
+        binsof(cp_kind.tr_kind_direct) &&
+        binsof(cp_has_restart.tr_restart_absent);
+      ignore_bins entdaa_without_restart =
+        binsof(cp_kind.tr_kind_entdaa) &&
+        binsof(cp_has_restart.tr_restart_absent);
+      ignore_bins ibi_with_restart =
+        binsof(cp_kind.tr_kind_ibi) &&
+        binsof(cp_has_restart.tr_restart_present);
+    }
+  endgroup
+
+  covergroup cg_segment with function sample();
+    option.per_instance = 1;
+
+    cp_kind: coverpoint kind_s {
+      bins seg_kind_unknown   = {I3C_KIND_UNKNOWN};
+      bins seg_kind_private   = {I3C_KIND_PRIVATE};
+      bins seg_kind_broadcast = {I3C_KIND_BROADCAST_CCC};
+      bins seg_kind_direct    = {I3C_KIND_DIRECT_CCC};
+      bins seg_kind_entdaa    = {I3C_KIND_ENTDAA};
+      bins seg_kind_ibi       = {I3C_KIND_IBI};
+    }
+
+    cp_direction: coverpoint direction_s {
+      bins seg_direction_write   = {I3C_WRITE};
+      bins seg_direction_read    = {I3C_READ};
+      bins seg_direction_unknown = {I3C_DIRECTION_UNKNOWN};
+    }
+
+    cp_payload_len: coverpoint payload_len_s {
+      bins seg_payload_zero       = {0};
+      bins seg_payload_one        = {1};
+      bins seg_payload_two        = {2};
+      bins seg_payload_three_four = {[3:4]};
+      bins seg_payload_five_plus  = default;
+    }
+
+    cp_header_complete: coverpoint header_complete_s {
+      bins seg_header_incomplete = {0};
+      bins seg_header_complete   = {1};
+    }
+
+    // The sampled value is deliberately raw.  Low/high are ACK/NACK only for
+    // address headers; this coverpoint does not infer data T-bit correctness.
+    cp_addr_ninth: coverpoint addr_ninth_s iff (header_complete_s) {
+      bins seg_addr_ninth_ack  = {1'b0};
+      bins seg_addr_ninth_nack = {1'b1};
+      bins seg_addr_ninth_x    = {1'bx};
+      bins seg_addr_ninth_z    = {1'bz};
+    }
+
+    cp_start_boundary: coverpoint start_boundary_s {
+      bins seg_start_boundary_none    = {I3C_BOUNDARY_NONE};
+      bins seg_start_boundary_initial = {I3C_BOUNDARY_START};
+      bins seg_start_boundary_restart = {I3C_BOUNDARY_RESTART};
+      bins seg_start_boundary_reset   = {I3C_BOUNDARY_RESET};
+    }
+
+    cp_end_boundary: coverpoint end_boundary_s {
+      bins seg_end_boundary_none    = {I3C_BOUNDARY_NONE};
+      bins seg_end_boundary_restart = {I3C_BOUNDARY_RESTART};
+      bins seg_end_boundary_stop    = {I3C_BOUNDARY_STOP};
+      bins seg_end_boundary_reset   = {I3C_BOUNDARY_RESET};
+    }
+
+    cp_ninth_count_status: coverpoint ninth_count_status_s {
+      bins seg_ninth_count_empty   = {NINTH_COUNTS_EMPTY};
+      bins seg_ninth_count_aligned = {NINTH_COUNTS_ALIGNED};
+      bins seg_ninth_count_missing = {NINTH_COUNTS_MISSING};
+      bins seg_ninth_count_extra   = {NINTH_COUNTS_EXTRA};
+    }
+
+    x_kind_direction: cross cp_kind, cp_direction {
+      ignore_bins unknown =
+        binsof(cp_kind.seg_kind_unknown) ||
+        binsof(cp_direction.seg_direction_unknown);
+      ignore_bins broadcast_read =
+        binsof(cp_kind.seg_kind_broadcast) &&
+        binsof(cp_direction.seg_direction_read);
+      ignore_bins ibi_write =
+        binsof(cp_kind.seg_kind_ibi) &&
+        binsof(cp_direction.seg_direction_write);
+    }
+
+    x_kind_addr_ack: cross cp_kind, cp_addr_ninth {
+      ignore_bins unknown_kind = binsof(cp_kind.seg_kind_unknown);
+      ignore_bins unknown_ninth =
+        binsof(cp_addr_ninth.seg_addr_ninth_x) ||
+        binsof(cp_addr_ninth.seg_addr_ninth_z);
+    }
+  endgroup
+
+  covergroup cg_data_ninth with function sample();
+    option.per_instance = 1;
+
+    cp_kind: coverpoint kind_s {
+      bins d9_kind_unknown   = {I3C_KIND_UNKNOWN};
+      bins d9_kind_private   = {I3C_KIND_PRIVATE};
+      bins d9_kind_broadcast = {I3C_KIND_BROADCAST_CCC};
+      bins d9_kind_direct    = {I3C_KIND_DIRECT_CCC};
+      bins d9_kind_entdaa    = {I3C_KIND_ENTDAA};
+      bins d9_kind_ibi       = {I3C_KIND_IBI};
+    }
+
+    cp_raw_ninth: coverpoint data_ninth_s {
+      bins d9_value_low  = {1'b0};
+      bins d9_value_high = {1'b1};
+      bins d9_value_x    = {1'bx};
+      bins d9_value_z    = {1'bz};
+    }
+
+    cp_read_controller_low: coverpoint data_ninth_controller_low_s
+      iff (direction_s == I3C_READ) {
+      bins d9_controller_released = {1'b0};
+      bins d9_controller_low      = {1'b1};
+    }
+
+    cp_read_target_low: coverpoint data_ninth_target_low_s
+      iff (direction_s == I3C_READ) {
+      bins d9_target_released = {1'b0};
+      bins d9_target_low      = {1'b1};
+    }
+
+    // Hits distinguish ordinary continuation, controller-only early end,
+    // target-only End-of-Data, and the equal-length case where both pull low.
+    x_read_t_drivers: cross cp_read_controller_low, cp_read_target_low;
+
+    x_kind_data_ninth: cross cp_kind, cp_raw_ninth {
+      ignore_bins unknown_kind = binsof(cp_kind.d9_kind_unknown);
+    }
+  endgroup
+
+  // IBI-specific closure: distinguish the legal no-MDB and one-MDB forms,
+  // and retain both OD contributors for the final target-driven T-bit.
+  covergroup cg_ibi with function sample();
+    option.per_instance = 1;
+
+    cp_mdb_count: coverpoint ibi_mdb_count_s {
+      bins no_mdb  = {0};
+      bins one_mdb = {1};
+      bins multiple_mdb = default;
+    }
+
+    cp_header_ninth: coverpoint ibi_header_ninth_s {
+      bins header_ack  = {1'b0};
+      bins header_nack = {1'b1};
+      bins header_unknown = {1'bx, 1'bz};
+    }
+
+    cp_end_boundary: coverpoint ibi_end_boundary_s {
+      bins ibi_stop_boundary = {I3C_BOUNDARY_STOP};
+      bins ibi_other_boundary = default;
+    }
+
+    cp_final_t: coverpoint ibi_t_s iff (ibi_mdb_count_s == 1) {
+      bins ibi_t_end = {1'b0};
+      bins ibi_t_continue = {1'b1};
+      bins ibi_t_unknown = {1'bx, 1'bz};
+    }
+
+    cp_controller_t_low: coverpoint ibi_controller_t_low_s
+      iff (ibi_mdb_count_s == 1) {
+      bins released = {1'b0};
+      bins drove_low = {1'b1};
+    }
+
+    cp_target_t_low: coverpoint ibi_target_t_low_s
+      iff (ibi_mdb_count_s == 1) {
+      bins released = {1'b0};
+      bins drove_low = {1'b1};
+    }
+
+    x_shape_ack_end: cross cp_mdb_count, cp_header_ninth, cp_end_boundary;
+    x_final_t_drivers: cross cp_controller_t_low, cp_target_t_low;
+  endgroup
+
+  covergroup cg_entdaa_round with function sample();
+    option.per_instance = 1;
+
+    cp_outcome: coverpoint entdaa_round_outcome_s {
+      bins round_incomplete        = {ENTDAA_ROUND_INCOMPLETE};
+      bins round_success           = {ENTDAA_ROUND_SUCCESS};
+      bins round_final_header_nack = {ENTDAA_ROUND_FINAL_HEADER_NACK};
+      bins round_da_nack           = {ENTDAA_ROUND_DA_NACK};
+      bins round_malformed         = {ENTDAA_ROUND_MALFORMED};
+    }
+
+    cp_header: coverpoint entdaa_header_s {
+      bins round_entdaa_read_header = {8'hfd};
+      bins round_other_header       = default;
+    }
+
+    cp_header_ninth: coverpoint entdaa_header_ninth_s {
+      bins round_header_ack  = {1'b0};
+      bins round_header_nack = {1'b1};
+      bins round_header_x    = {1'bx};
+      bins round_header_z    = {1'bz};
+    }
+
+    cp_parity: coverpoint entdaa_parity_status_s {
+      bins round_parity_not_present = {ENTDAA_PARITY_NOT_PRESENT};
+      bins round_parity_good        = {ENTDAA_PARITY_GOOD};
+      bins round_parity_bad         = {ENTDAA_PARITY_BAD};
+      bins round_parity_unknown     = {ENTDAA_PARITY_UNKNOWN};
+    }
+
+    cp_start_boundary: coverpoint entdaa_start_boundary_s {
+      bins round_start_restart = {I3C_BOUNDARY_RESTART};
+      bins round_start_other   = default;
+    }
+
+    cp_end_boundary: coverpoint entdaa_end_boundary_s {
+      bins round_end_restart = {I3C_BOUNDARY_RESTART};
+      bins round_end_stop    = {I3C_BOUNDARY_STOP};
+      bins round_end_reset   = {I3C_BOUNDARY_RESET};
+      bins round_end_other   = default;
+    }
+
+    x_outcome_end: cross cp_outcome, cp_end_boundary;
+  endgroup
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+    cg_transfer   = new();
+    cg_segment    = new();
+    cg_data_ninth = new();
+    cg_ibi        = new();
+    cg_entdaa_round = new();
+  endfunction
+
+  function void write(i3c_bus_txn t);
+    if (t == null) begin
+      `uvm_warning("BUS_COV", "Ignoring null i3c_bus_txn")
+      return;
+    end
+
+    kind_s                  = t.kind;
+    origin_s                = t.origin;
+    segment_count_s         = t.segments.size();
+    entdaa_round_count_s    = t.entdaa_rounds.size();
+    has_start_s             = 1'b0;
+    has_restart_s           = 1'b0;
+    has_stop_s              = 1'b0;
+    has_null_segment_s      = 1'b0;
+    has_incomplete_header_s = 1'b0;
+
+    foreach (t.segments[i]) begin
+      if (t.segments[i] == null) begin
+        has_null_segment_s = 1'b1;
+      end
+      else begin
+        if (t.segments[i].start_boundary == I3C_BOUNDARY_START)
+          has_start_s = 1'b1;
+        if ((t.segments[i].start_boundary == I3C_BOUNDARY_RESTART) ||
+            (t.segments[i].end_boundary == I3C_BOUNDARY_RESTART) ||
+            t.segments[i].ended_by_restart)
+          has_restart_s = 1'b1;
+        if ((t.segments[i].end_boundary == I3C_BOUNDARY_STOP) ||
+            t.segments[i].ended_by_stop)
+          has_stop_s = 1'b1;
+        if (!t.segments[i].header_complete)
+          has_incomplete_header_s = 1'b1;
+      end
+    end
+
+    if ((t.kind == I3C_KIND_IBI) &&
+        (t.segments.size() == 1) &&
+        (t.segments[0] != null)) begin
+      ibi_mdb_count_s       = t.segments[0].data.size();
+      ibi_header_ninth_s    = t.segments[0].addr_ninth;
+      ibi_end_boundary_s    = t.segments[0].end_boundary;
+      ibi_t_s               = 1'bx;
+      ibi_controller_t_low_s = 1'bx;
+      ibi_target_t_low_s     = 1'bx;
+      if (t.segments[0].data_ninth_bits.size() > 0)
+        ibi_t_s = t.segments[0].data_ninth_bits[0];
+      if (t.segments[0].data_ninth_controller_low.size() > 0)
+        ibi_controller_t_low_s =
+          t.segments[0].data_ninth_controller_low[0];
+      if (t.segments[0].data_ninth_target_low.size() > 0)
+        ibi_target_t_low_s = t.segments[0].data_ninth_target_low[0];
+      cg_ibi.sample();
+    end
+
+
+    foreach (t.entdaa_rounds[i]) begin
+      if (t.entdaa_rounds[i] == null) begin
+        has_null_segment_s = 1'b1;
+      end
+      else begin
+        if ((t.entdaa_rounds[i].start_boundary == I3C_BOUNDARY_RESTART) ||
+            (t.entdaa_rounds[i].end_boundary == I3C_BOUNDARY_RESTART) ||
+            t.entdaa_rounds[i].ended_by_restart)
+          has_restart_s = 1'b1;
+        if ((t.entdaa_rounds[i].end_boundary == I3C_BOUNDARY_STOP) ||
+            t.entdaa_rounds[i].ended_by_stop)
+          has_stop_s = 1'b1;
+        if (!t.entdaa_rounds[i].header_complete)
+          has_incomplete_header_s = 1'b1;
+      end
+    end
+
+    cg_transfer.sample();
+
+    foreach (t.segments[i]) begin
+      if (t.segments[i] != null) begin
+        direction_s       = t.segments[i].direction;
+        start_boundary_s  = t.segments[i].start_boundary;
+        end_boundary_s    = t.segments[i].end_boundary;
+        payload_len_s     = t.segments[i].data.size();
+        header_complete_s = t.segments[i].header_complete;
+        addr_ninth_s      = t.segments[i].addr_ninth;
+
+        if ((t.segments[i].data.size() == 0) &&
+            (t.segments[i].data_ninth_bits.size() == 0))
+          ninth_count_status_s = NINTH_COUNTS_EMPTY;
+        else if (t.segments[i].data_ninth_bits.size() ==
+                 t.segments[i].data.size())
+          ninth_count_status_s = NINTH_COUNTS_ALIGNED;
+        else if (t.segments[i].data_ninth_bits.size() <
+                 t.segments[i].data.size())
+          ninth_count_status_s = NINTH_COUNTS_MISSING;
+        else
+          ninth_count_status_s = NINTH_COUNTS_EXTRA;
+
+        cg_segment.sample();
+
+        foreach (t.segments[i].data_ninth_bits[j]) begin
+          data_ninth_s = t.segments[i].data_ninth_bits[j];
+          if (j < t.segments[i].data_ninth_controller_low.size())
+            data_ninth_controller_low_s =
+              t.segments[i].data_ninth_controller_low[j];
+          else
+            data_ninth_controller_low_s = 1'bx;
+          if (j < t.segments[i].data_ninth_target_low.size())
+            data_ninth_target_low_s = t.segments[i].data_ninth_target_low[j];
+          else
+            data_ninth_target_low_s = 1'bx;
+          cg_data_ninth.sample();
+        end
+      end
+    end
+
+
+    foreach (t.entdaa_rounds[i]) begin
+      if (t.entdaa_rounds[i] != null) begin
+        entdaa_start_boundary_s = t.entdaa_rounds[i].start_boundary;
+        entdaa_end_boundary_s   = t.entdaa_rounds[i].end_boundary;
+        entdaa_header_s         = t.entdaa_rounds[i].header;
+        entdaa_header_ninth_s   = t.entdaa_rounds[i].header_ninth;
+
+        if (!t.entdaa_rounds[i].assigned_da_complete)
+          entdaa_parity_status_s = ENTDAA_PARITY_NOT_PRESENT;
+        else if ((^{t.entdaa_rounds[i].assigned_da,
+                    t.entdaa_rounds[i].da_parity}) === 1'b1)
+          entdaa_parity_status_s = ENTDAA_PARITY_GOOD;
+        else if ((^{t.entdaa_rounds[i].assigned_da,
+                    t.entdaa_rounds[i].da_parity}) === 1'b0)
+          entdaa_parity_status_s = ENTDAA_PARITY_BAD;
+        else
+          entdaa_parity_status_s = ENTDAA_PARITY_UNKNOWN;
+
+        if (t.entdaa_rounds[i].is_successful())
+          entdaa_round_outcome_s = ENTDAA_ROUND_SUCCESS;
+        else if (t.entdaa_rounds[i].is_final_header_nack())
+          entdaa_round_outcome_s = ENTDAA_ROUND_FINAL_HEADER_NACK;
+        else if (t.entdaa_rounds[i].header_complete &&
+                 (t.entdaa_rounds[i].header === 8'hfd) &&
+                 (t.entdaa_rounds[i].header_ninth === 1'b0) &&
+                 t.entdaa_rounds[i].id_complete &&
+                 t.entdaa_rounds[i].assigned_da_complete &&
+                 (entdaa_parity_status_s == ENTDAA_PARITY_GOOD) &&
+                 t.entdaa_rounds[i].da_ack_complete &&
+                 (t.entdaa_rounds[i].da_ack === 1'b1) &&
+                 (t.entdaa_rounds[i].end_boundary == I3C_BOUNDARY_STOP))
+          entdaa_round_outcome_s = ENTDAA_ROUND_DA_NACK;
+        else if (!t.entdaa_rounds[i].header_complete ||
+                 ((t.entdaa_rounds[i].header_ninth === 1'b0) &&
+                  (!t.entdaa_rounds[i].id_complete ||
+                   !t.entdaa_rounds[i].assigned_da_complete ||
+                   !t.entdaa_rounds[i].da_ack_complete)))
+          entdaa_round_outcome_s = ENTDAA_ROUND_INCOMPLETE;
+        else
+          entdaa_round_outcome_s = ENTDAA_ROUND_MALFORMED;
+
+        cg_entdaa_round.sample();
+      end
+    end
+  endfunction
+
+  function void report_phase(uvm_phase phase);
+    super.report_phase(phase);
+    `uvm_info("BUS_COV", $sformatf("Transfer coverage: %0.1f%%",
+              cg_transfer.get_coverage()), UVM_LOW)
+    `uvm_info("BUS_COV", $sformatf("Segment coverage: %0.1f%%",
+              cg_segment.get_coverage()), UVM_LOW)
+    `uvm_info("BUS_COV", $sformatf("Data ninth-bit coverage: %0.1f%%",
+              cg_data_ninth.get_coverage()), UVM_LOW)
+    `uvm_info("BUS_COV", $sformatf("IBI coverage: %0.1f%%",
+              cg_ibi.get_coverage()), UVM_LOW)
+    `uvm_info("BUS_COV", $sformatf("ENTDAA round coverage: %0.1f%%",
+              cg_entdaa_round.get_coverage()), UVM_LOW)
+  endfunction
+endclass

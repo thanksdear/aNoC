@@ -51,8 +51,9 @@ typedef enum logic [3:0] {
     S_STOP_SCL_LO = 4'd4,
     S_STOP_SCL_HI = 4'd5,
     S_STOP_COND   = 4'd6,
-    S_SR_SDA_HI   = 4'd7,
-    S_SR_SDA_LO   = 4'd8
+    S_SR_SCL_LO   = 4'd7,
+    S_SR_SDA_HI   = 4'd8,
+    S_SR_SDA_LO   = 4'd9
 } lc_state_t;
 
 lc_state_t   state, next_state;
@@ -76,7 +77,7 @@ always_comb begin
                     CMD_START: next_state = S_START_COND;
                     CMD_DATA:  next_state = S_BIT_SCL_LO;
                     CMD_STOP:  next_state = S_STOP_SCL_LO;
-                    CMD_SR:    next_state = S_SR_SDA_HI;
+                    CMD_SR:    next_state = S_SR_SCL_LO;
                 endcase
         end
         S_START_COND:  if (cnt >= sda_hold_time  - 16'h1) next_state = S_IDLE;
@@ -85,6 +86,12 @@ always_comb begin
         S_STOP_SCL_LO: if (cnt >= scl_low_period  - 16'h1) next_state = S_STOP_SCL_HI;
         S_STOP_SCL_HI: if (cnt >= sda_hold_time   - 16'h1) next_state = S_STOP_COND;
         S_STOP_COND:   if (cnt >= sda_hold_time   - 16'h1) next_state = S_IDLE;
+        // Sr 前先在 SCL low 保持旧 SDA，再释放 SDA。等 SDA 已在
+        // SCL low 期间稳定至少一拍后才拉高 SCL，避免旧值为 0 时
+        // 把 SDA 上升沿误生成 STOP。
+        S_SR_SCL_LO:   if ((cnt >= scl_low_period - 16'h1) &&
+                           (cnt >= sda_hold_time))
+                              next_state = S_SR_SDA_HI;
         S_SR_SDA_HI:   if (cnt >= sda_hold_time   - 16'h1) next_state = S_SR_SDA_LO;
         S_SR_SDA_LO:   if (cnt >= sda_hold_time   - 16'h1) next_state = S_IDLE;
         default: next_state = S_IDLE;
@@ -134,7 +141,9 @@ assign cmd_ready = (state == S_IDLE);
 // SCL 由 master push-pull 驱动，仅在 low 状态拉低
 logic scl_drive;
 always_comb
-    scl_drive = (state != S_BIT_SCL_LO) && (state != S_STOP_SCL_LO);
+    scl_drive = (state != S_BIT_SCL_LO) &&
+                (state != S_STOP_SCL_LO) &&
+                (state != S_SR_SCL_LO);
 
 assign scl_oe  = 1'b1;
 assign scl_out = scl_drive;
@@ -150,6 +159,7 @@ always_comb begin
         S_STOP_SCL_LO: sda_drive = 1'b0;
         S_STOP_SCL_HI: sda_drive = 1'b0;  
         S_STOP_COND:   sda_drive = 1'b1;
+        S_SR_SCL_LO:   sda_drive = (cnt < sda_hold_time) ? sda_prev : 1'b1;
         S_SR_SDA_HI:   sda_drive = 1'b1;
         S_SR_SDA_LO:   sda_drive = 1'b0;
         default:       sda_drive = 1'b1;

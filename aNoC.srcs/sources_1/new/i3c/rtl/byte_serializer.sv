@@ -6,7 +6,7 @@
 // 第9位规则：
 //   地址阶段：释放 SDA，由 target 驱动 ACK/NACK
 //   I3C write：master 驱动 T-bit，值为 tx_data 的 odd parity
-//   I3C read ：master 驱动 T-bit，值为 tbit_cont
+//   I3C read ：target 先驱动 T-bit；master 可在仍有数据时拉低 SDA 提前结束
 //   I2C write：释放 SDA，由 target 驱动 ACK/NACK
 //   I2C read ：master 驱动 ACK/NACK，0=continue，1=last
 //
@@ -25,7 +25,7 @@ module byte_serializer (
     input  logic [7:0]  tx_data,        // 写/地址阶段要发送的 byte
     input  logic        is_read,        // 1=target 驱动 bit[7:0]
     input  logic        is_addr,        // 1=地址 byte，第9位为 ACK/NACK
-    input  logic        tbit_cont,      // read 方向：1=continue，0=last
+    input  logic        tbit_cont,      // read 方向：master 1=继续/释放，0=提前结束
     input  logic        cmd_valid,
     output logic        cmd_ready,
 
@@ -34,6 +34,7 @@ module byte_serializer (
     output logic        byte_done,      // 第9位结束
     output logic        ack_ok,         // 地址/I2C：1=ACK，0=NACK
     output logic        parity_err,     // I3C write 的 T-bit 不匹配
+    output logic        read_continue,  // I3C read：解析后的 T=1；仅 byte_done 时有效
 
     // 下层接口，连接 Line Controller
     output logic [1:0]  lc_cmd,
@@ -86,7 +87,9 @@ always_comb begin
     else if (!is_read_r)
         bit9_tx = !parity_acc;      // I3C write：T-bit 奇偶校验
     else
-        bit9_tx = tbit_cont_r;      // I3C read：是否继续
+        // I3C read 的 T-bit 由 target 先驱动。这里使用 OD：master
+        // 希望继续时释放 SDA；达到接收上限时拉低 SDA 提前结束。
+        bit9_tx = tbit_cont_r;
 end
 
 always_ff @(posedge clk or negedge rst_n) begin
@@ -139,8 +142,10 @@ always_ff @(posedge clk or negedge rst_n) begin
         byte_done   <= 1'b0;
         ack_ok      <= 1'b0;
         parity_err  <= 1'b0;
+        read_continue <= 1'b0;
     end else begin
-        byte_done <= 1'b0;   // 默认清零，S_BIT9 完成时置位
+        byte_done  <= 1'b0;   // 默认清零，S_BIT9 完成时置位
+        parity_err <= 1'b0;   // 错误结果只在 byte_done 当拍有效
 
         // 从 IDLE 进入工作状态时锁存命令参数
         if (state == S_IDLE && next_state != S_IDLE) begin
@@ -185,6 +190,10 @@ always_ff @(posedge clk or negedge rst_n) begin
             rx_data    <= rx_shift;
             // ack_ok 只对地址阶段和 I2C 有意义；I3C data 强制为1
             ack_ok     <= (is_addr_r || !i3c_mode_r) ? !lc_sda_rx : 1'b1;
+            // I3C read 的总线 T 只有在 target 和 controller 都愿意继续
+            // 时才为1。I2C 没有 target-driven T，继续条件来自本地长度。
+            read_continue <= is_read_r &&
+                             (i3c_mode_r ? lc_sda_rx : tbit_cont_r);
             // parity_err 只检查 I3C write 的 T-bit 回读
             parity_err <= i3c_mode_r && !is_addr_r && !is_read_r
                           && (lc_sda_rx != !parity_acc);
@@ -197,11 +206,12 @@ end
 // idle 时可接收新命令
 assign cmd_ready = (state == S_IDLE);
 
-// OD/PP 选择：地址、I2C 和 I3C read data 使用 OD；I3C write data 和 T-bit 使用 PP。
+// OD/PP 选择：地址、I2C 和 I3C read data/T-bit 使用 OD；
+// I3C write data 和 parity T-bit 使用 PP。
 always_comb begin
     case (state)
         S_BITS:  lc_open_drain = is_addr_r || !i3c_mode_r || is_read_r;
-        S_BIT9:  lc_open_drain = is_addr_r || !i3c_mode_r;
+        S_BIT9:  lc_open_drain = is_addr_r || !i3c_mode_r || is_read_r;
         default: lc_open_drain = 1'b1;
     endcase
 end

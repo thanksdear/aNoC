@@ -40,7 +40,9 @@ module tb_i3c_top;
   logic        irq;
   logic        slave_ack_addr;
   logic        slave_read_en;
+  int unsigned slave_read_length;
   logic        slave_i2c_read_mode;
+  logic        slave_i3c_write_tbit_mode;
   int          slave_i2c_write_ack_count;
   logic        ccc_ack_en;
   logic        ccc_direct_en;
@@ -64,48 +66,105 @@ module tb_i3c_top;
   localparam logic [7:0] CCC_ENTDAA = 8'h07;
   localparam logic [7:0] CCC_GETSTATUS = 8'h90;
   localparam logic [63:0] ENTDAA_ID = 64'h1234_5678_9abc_de01;
+  localparam logic [6:0] ENTDAA_EXPECTED_DA = 7'h01;
 
   int errors;
 
+  task automatic slave_wait_entdaa_start();
+    forever begin
+      @(negedge sda_bus);
+      if (scl_bus === 1'b1)
+        return;
+    end
+  endtask
+
+  task automatic slave_wait_entdaa_stop();
+    forever begin
+      @(posedge sda_bus);
+      if (scl_bus === 1'b1)
+        return;
+    end
+  endtask
+
   task automatic slave_handle_entdaa();
+    logic [7:0] header_byte;
     logic [7:0] da_byte;
+    logic       assigned;
+    logic       participate;
+    logic       da_valid;
 
-    for (int bit_idx = 63; bit_idx >= 0; bit_idx--) begin
-      slave_drive_low <= !ENTDAA_ID[bit_idx];
+    participate = entdaa_slave_en;
+    assigned = 1'b0;
+
+    forever begin
+      slave_wait_entdaa_start();
+      for (int bit_idx = 7; bit_idx >= 0; bit_idx--) begin
+        @(posedge scl_bus);
+        header_byte[bit_idx] = sda_bus;
+      end
+
+      if (header_byte !== 8'hfd) begin
+        errors++;
+        $error("Expected ENTDAA 7E/R header 0xfd, got 0x%02h",
+               header_byte);
+      end
+
+      // NACK the final discovery header after this target is assigned.  A
+      // header NACK is ENTDAA's normal no-more-unassigned-targets terminator.
+      if (!participate || assigned || header_byte !== 8'hfd) begin
+        @(negedge scl_bus);
+        slave_dbg_ack_phase <= 1'b1;
+        slave_drive_low <= 1'b0;
+        @(posedge scl_bus);
+        slave_dbg_ack_phase <= 1'b0;
+        slave_wait_entdaa_stop();
+        return;
+      end
+
+      @(negedge scl_bus);
+      slave_dbg_ack_phase <= 1'b1;
+      slave_drive_low <= 1'b1; // ACK the first 7E/R header.
       @(posedge scl_bus);
       @(negedge scl_bus);
-    end
-    slave_drive_low <= 1'b0;
+      slave_drive_low <= 1'b0;
+      slave_dbg_ack_phase <= 1'b0;
 
-    for (int bit_idx = 7; bit_idx >= 0; bit_idx--) begin
-      @(posedge scl_bus);
-      da_byte[bit_idx] = sda_bus;
-    end
-    slave_dbg_entdaa_da <= da_byte;
+      for (int bit_idx = 63; bit_idx >= 0; bit_idx--) begin
+        slave_drive_low <= !ENTDAA_ID[bit_idx];
+        @(posedge scl_bus);
+        @(negedge scl_bus);
+      end
+      slave_drive_low <= 1'b0;
 
-    @(negedge scl_bus);
-    slave_dbg_ack_phase <= 1'b1;
-    slave_drive_low <= 1'b1;   // ACK assigned DA.
-    @(posedge scl_bus);
-    @(negedge scl_bus);
-    slave_drive_low <= 1'b0;
-    slave_dbg_ack_phase <= 1'b0;
+      for (int bit_idx = 7; bit_idx >= 0; bit_idx--) begin
+        @(posedge scl_bus);
+        da_byte[bit_idx] = sda_bus;
+      end
+      slave_dbg_entdaa_da <= da_byte;
 
-    // No more unassigned slaves: leave SDA released for the next ID round,
-    // then NACK the following DA assignment so the master exits ENTDAA.
-    for (int bit_idx = 63; bit_idx >= 0; bit_idx--) begin
+      da_valid = ((^da_byte) === 1'b1) &&
+                 (da_byte[7:1] === ENTDAA_EXPECTED_DA);
+      if (!da_valid) begin
+        errors++;
+        $error("Invalid assigned DA/parity: got byte=0x%02h expected DA=0x%02h",
+               da_byte, ENTDAA_EXPECTED_DA);
+      end
+
+      @(negedge scl_bus);
+      slave_dbg_ack_phase <= 1'b1;
+      slave_drive_low <= da_valid; // ACK only a valid expected DA.
       @(posedge scl_bus);
       @(negedge scl_bus);
-    end
+      slave_drive_low <= 1'b0;
+      slave_dbg_ack_phase <= 1'b0;
 
-    for (int bit_idx = 7; bit_idx >= 0; bit_idx--) begin
-      @(posedge scl_bus);
-      da_byte[bit_idx] = sda_bus;
-    end
-    slave_dbg_entdaa_da <= da_byte;
+      if (!da_valid) begin
+        slave_wait_entdaa_stop();
+        return;
+      end
 
-    @(posedge scl_bus);   // NACK: keep SDA released.
-    @(negedge scl_bus);
+      assigned = 1'b1;
+    end
   endtask
 
   task automatic slave_send_ibi(input logic [6:0] addr,
@@ -129,6 +188,12 @@ module tb_i3c_top;
     @(posedge pclk);
     slave_drive_low <= 1'b0; // ACK/NACK bit is driven by master.
     @(posedge scl_bus);
+    if (sda_bus !== 1'b0 || slave_drive_low !== 1'b0 ||
+        sda_oe !== 1'b1 || sda_out !== 1'b0) begin
+      errors++;
+      $error("IBI address ACK ownership/value incorrect: bus=%b target_low=%b controller_oe/out=%b/%b",
+             sda_bus, slave_drive_low, sda_oe, sda_out);
+    end
 
     if (has_mdb) begin
       for (int bit_idx = 7; bit_idx >= 0; bit_idx--) begin
@@ -140,8 +205,17 @@ module tb_i3c_top;
 
       @(negedge scl_bus);
       @(posedge pclk);
-      slave_drive_low <= 1'b0; // T-bit driven by master.
+      // The target owns End-of-Data for its final MDB and drives T low.  This
+      // one-byte controller also limits the read by pulling the same OD bit
+      // low, so the unit check below requires both contributors.
+      slave_drive_low <= 1'b1;
       @(posedge scl_bus);
+      if (sda_bus !== 1'b0 || slave_drive_low !== 1'b1 ||
+          sda_oe !== 1'b1 || sda_out !== 1'b0) begin
+        errors++;
+        $error("IBI MDB T ownership/value incorrect: bus=%b target_low=%b controller_oe/out=%b/%b",
+               sda_bus, slave_drive_low, sda_oe, sda_out);
+      end
     end
 
     slave_drive_low <= 1'b0;
@@ -181,6 +255,12 @@ module tb_i3c_top;
   assign scl_bus = scl_oe ? scl_out : 1'b1;
   assign sda_bus = (slave_drive_low || (sda_oe && !sda_out)) ? 1'b0 : 1'b1;
 
+  always @(posedge pclk) begin
+    if (presetn === 1'b1 && sda_oe === 1'b1 && sda_out === 1'b1 &&
+        slave_drive_low === 1'b1)
+      $error("SDA contention: controller drove high while slave drove low");
+  end
+
   always_comb begin
     scl_in = scl_bus;
     sda_in = sda_bus;
@@ -192,6 +272,7 @@ module tb_i3c_top;
     logic [7:0] read_byte;
     logic       matched;
     logic       cont;
+    logic       target_more;
     int         byte_idx;
     int         write_ack_count;
 
@@ -240,24 +321,25 @@ module tb_i3c_top;
       end
       slave_dbg_ccc_byte <= ccc_byte;
 
+      // CCC Code is an I3C write byte. Its ninth bit is controller-driven
+      // odd parity, so the target must leave SDA released rather than ACK it.
       @(negedge scl_bus);
-      slave_dbg_ack_phase <= 1'b1;
-      slave_drive_low <= 1'b1;       // ACK CCC code byte.
-      @(posedge scl_bus);
-      if (ccc_direct_en)
-        repeat (TB_SCL_HIGH_CYCLES) @(posedge pclk);
-      else
-        @(negedge scl_bus);
       slave_drive_low <= 1'b0;
       slave_dbg_ack_phase <= 1'b0;
+      @(posedge scl_bus);
+
+      if (!ccc_direct_en)
+        @(negedge scl_bus);
 
       if (!ccc_direct_en) begin
-        if (entdaa_slave_en && ccc_byte == CCC_ENTDAA)
+        if (ccc_byte == CCC_ENTDAA)
           slave_handle_entdaa();
         slave_dbg_active <= 1'b0;
         return;
       end
 
+      // Return before Sr so the outer loop can recognize and handle the
+      // following direct-target address segment.
       expect_ccc_target <= 1'b1;
       slave_dbg_active <= 1'b0;
       return;
@@ -286,8 +368,13 @@ module tb_i3c_top;
         slave_dbg_write_byte <= read_byte;
 
         @(negedge scl_bus);
-        slave_dbg_ack_phase <= 1'b1;
-        slave_drive_low <= 1'b1;
+        if (slave_i3c_write_tbit_mode) begin
+          slave_dbg_ack_phase <= 1'b0;
+          slave_drive_low <= 1'b0;
+        end else begin
+          slave_dbg_ack_phase <= 1'b1;
+          slave_drive_low <= 1'b1;
+        end
         @(posedge scl_bus);
         @(negedge scl_bus);
         slave_drive_low <= 1'b0;
@@ -305,7 +392,13 @@ module tb_i3c_top;
 
     byte_idx = 0;
     forever begin
-      read_byte = (byte_idx < 4) ? slave_read_data[byte_idx] : 8'hff;
+      if (byte_idx >= slave_read_length || byte_idx >= 4) begin
+        errors++;
+        $error("Target read plan exhausted unexpectedly at byte %0d", byte_idx);
+        slave_dbg_active <= 1'b0;
+        return;
+      end
+      read_byte = slave_read_data[byte_idx];
 
       for (int bit_idx = 7; bit_idx >= 0; bit_idx--) begin
         slave_drive_low <= !read_byte[bit_idx];
@@ -313,10 +406,14 @@ module tb_i3c_top;
         @(negedge scl_bus);
       end
 
-      slave_drive_low <= 1'b0;
-      @(posedge scl_bus);   // I3C read T-bit: master drives 1=continue, 0=last.
+      target_more = ((byte_idx + 1) < slave_read_length);
+      // I3C target drives T first: 1=more (release), 0=end (pull low).
+      // The controller may also pull a target T=1 low to terminate early.
+      slave_drive_low <= slave_i2c_read_mode ? 1'b0 : !target_more;
+      @(posedge scl_bus);
       cont = slave_i2c_read_mode ? !sda_bus : sda_bus;
       @(negedge scl_bus);
+      slave_drive_low <= 1'b0;
 
       byte_idx++;
       if (!cont) begin
@@ -328,7 +425,9 @@ module tb_i3c_top;
 
   initial begin
     slave_drive_low <= 1'b0;
+    slave_read_length <= 0;
     slave_i2c_read_mode <= 1'b0;
+    slave_i3c_write_tbit_mode <= 1'b0;
     slave_i2c_write_ack_count <= 0;
     slave_dbg_active <= 1'b0;
     slave_dbg_branch <= 2'd0;
@@ -338,11 +437,25 @@ module tb_i3c_top;
     slave_dbg_entdaa_da <= 8'h00;
     slave_dbg_matched <= 1'b0;
     slave_dbg_ack_phase <= 1'b0;
-    wait (presetn === 1'b1);
     forever begin
-      @(negedge sda_bus);
-      if (scl_bus && !slave_drive_low && (slave_ack_addr || slave_read_en || ccc_ack_en))
-        slave_handle_frame();
+      wait ((presetn === 1'b1) && (dut.sw_rst !== 1'b1));
+      fork : slave_reset_epoch
+        begin
+          wait ((presetn !== 1'b1) || (dut.sw_rst === 1'b1));
+        end
+        begin
+          forever begin
+            @(negedge sda_bus);
+            if (scl_bus && !slave_drive_low &&
+                (slave_ack_addr || slave_read_en || ccc_ack_en))
+              slave_handle_frame();
+          end
+        end
+      join_any
+      disable slave_reset_epoch;
+      slave_drive_low <= 1'b0;
+      slave_dbg_active <= 1'b0;
+      slave_dbg_ack_phase <= 1'b0;
     end
   end
 
@@ -475,6 +588,7 @@ module tb_i3c_top;
     errors = 0;
     slave_ack_addr = 1'b0;
     slave_read_en = 1'b0;
+    slave_read_length = 0;
     slave_i2c_read_mode <= 1'b0;
     ccc_ack_en = 1'b0;
     ccc_direct_en = 1'b0;
@@ -555,9 +669,38 @@ module tb_i3c_top;
     apb_read(REG_ERR_STATUS, rdata);
     expect_eq("ERR_STATUS after ACK write", rdata, 32'h0000_0000, 32'h0000_0003);
 
+    $display("[%0t] Run CMD-before-TX streaming write", $time);
+    slave_ack_addr <= 1'b1;
+    slave_i2c_write_ack_count <= 2;
+    slave_i3c_write_tbit_mode <= 1'b1;
+    apb_write(CMD_PORT, private_cmd(7'h12, 1'b0, 8'd2));
+    wait (dut.u_sched.state == 3'd3); // S_DATA_WR: address ACK completed.
+    repeat (4) @(posedge pclk);
+    if (!dut.hw_busy) begin
+      errors++;
+      $error("CMD-before-TX command did not remain busy waiting for payload");
+    end
+
+    apb_write(TX_PORT, 32'h0000_00d1);
+    wait (slave_dbg_write_byte === 8'hd1);
+    if (!dut.hw_busy) begin
+      errors++;
+      $error("CMD-before-TX command completed before byte[1] arrived");
+    end
+    apb_write(TX_PORT, 32'h0000_00e2);
+    wait_status_idle();
+    slave_ack_addr <= 1'b0;
+    slave_i2c_write_ack_count <= 0;
+    slave_i3c_write_tbit_mode <= 1'b0;
+    apb_read(RESP_PORT, response);
+    expect_eq("RESP.cmd_before_tx", response,
+              32'h0000_0000, 32'h0000_0003);
+
     $display("[%0t] Run private 2-byte read with slave data", $time);
     slave_read_data[0] = 8'h3c;
     slave_read_data[1] = 8'ha7;
+    slave_read_data[2] = 8'hd2;
+    slave_read_length = 3;
     slave_ack_addr = 1'b1;
     slave_read_en = 1'b1;
 
@@ -566,6 +709,7 @@ module tb_i3c_top;
 
     slave_ack_addr = 1'b0;
     slave_read_en = 1'b0;
+    slave_read_length = 0;
 
     apb_read(RESP_PORT, response);
     expect_eq("RESP.read.ok", response, 32'h0000_0000, 32'h0000_0003);
@@ -577,6 +721,61 @@ module tb_i3c_top;
 
     apb_read(REG_ERR_STATUS, rdata);
     expect_eq("ERR_STATUS after read", rdata, 32'h0000_0000, 32'h0000_0003);
+
+    $display("[%0t] Run target-terminated private short read", $time);
+    slave_read_data[0] = 8'he1;
+    slave_read_length = 1;
+    slave_ack_addr = 1'b1;
+    slave_read_en = 1'b1;
+
+    apb_write(CMD_PORT, private_cmd(7'h12, 1'b1, 8'd3));
+    wait_status_idle();
+
+    slave_ack_addr = 1'b0;
+    slave_read_en = 1'b0;
+    slave_read_length = 0;
+
+    apb_read(RESP_PORT, response);
+    expect_eq("RESP.read.short.ok", response, 32'h0000_0000, 32'h0000_0003);
+    apb_read(RX_PORT, rdata);
+    expect_eq("RX short byte0", rdata, 32'h0000_00e1, 32'h0000_00ff);
+    // apb_read() returns in the same time slot in which the FIFO read pointer
+    // advances.  Let that NBA update settle before inspecting empty directly.
+    #1;
+    if (!dut.rx_empty) begin
+      errors++;
+      $error("Target short read wrote more than one byte into RX FIFO");
+    end
+
+    $display("[%0t] Abort a TX-starved command with software reset", $time);
+    slave_ack_addr <= 1'b1;
+    apb_write(CMD_PORT, private_cmd(7'h12, 1'b0, 8'd1));
+    wait (dut.u_sched.state == 3'd3); // S_DATA_WR: blocked on empty TX FIFO.
+    if (!dut.hw_busy) begin
+      errors++;
+      $error("software-reset setup command was not busy");
+    end
+    apb_write(REG_CTRL, 32'h0000_0007);
+    slave_ack_addr <= 1'b0;
+    repeat (3) @(posedge pclk);
+    apb_read(REG_CTRL, rdata);
+    expect_eq("CTRL after sw_rst", rdata,
+              32'h0000_0003, 32'h0000_001f);
+    apb_read(REG_STATUS, rdata);
+    expect_eq("STATUS after sw_rst", rdata,
+              32'h0000_0000, 32'h0000_0001);
+    if (irq) begin
+      errors++;
+      $error("IRQ remained asserted after software reset");
+    end
+
+    slave_ack_addr <= 1'b1;
+    apb_write(CMD_PORT, private_cmd(7'h12, 1'b0, 8'd0));
+    wait_status_idle();
+    slave_ack_addr <= 1'b0;
+    apb_read(RESP_PORT, response);
+    expect_eq("RESP.post_sw_rst", response,
+              32'h0000_0000, 32'h0000_0003);
 
     $display("[%0t] Run broadcast CCC ENEC header-only", $time);
     ccc_ack_en = 1'b1;
@@ -594,6 +793,7 @@ module tb_i3c_top;
     $display("[%0t] Run direct CCC GETSTATUS read with slave data", $time);
     slave_read_data[0] <= 8'h55;
     slave_read_data[1] <= 8'haa;
+    slave_read_length <= 2;
     slave_ack_addr <= 1'b1;
     slave_read_en <= 1'b1;
     ccc_ack_en <= 1'b1;
@@ -604,6 +804,7 @@ module tb_i3c_top;
 
     slave_ack_addr <= 1'b0;
     slave_read_en <= 1'b0;
+    slave_read_length <= 0;
     ccc_ack_en <= 1'b0;
     ccc_direct_en <= 1'b0;
 
@@ -664,9 +865,29 @@ module tb_i3c_top;
     apb_read(REG_ERR_STATUS, rdata);
     expect_eq("ERR_STATUS after I2C write", rdata, 32'h0000_0000, 32'h0000_0003);
 
+    $display("[%0t] Run I2C write with NACK on the second data byte", $time);
+    apb_write(TX_PORT, 32'h0000_0033);
+    apb_write(TX_PORT, 32'h0000_0044);
+    slave_ack_addr <= 1'b1;
+    // ACK byte[0], then release byte[1]'s ninth bit to generate NACK.
+    slave_i2c_write_ack_count <= 1;
+    apb_write(CMD_PORT, private_cmd(7'h12, 1'b0, 8'd2));
+    wait_status_idle();
+    slave_ack_addr <= 1'b0;
+    slave_i2c_write_ack_count <= 0;
+
+    apb_read(RESP_PORT, response);
+    expect_eq("RESP.i2c.data_nack", response,
+              32'h0000_0002, 32'h0000_0003);
+    apb_read(REG_ERR_STATUS, rdata);
+    expect_eq("ERR_STATUS after I2C data NACK", rdata,
+              32'h0000_0002, 32'h0000_0002);
+    apb_write(REG_ERR_STATUS, 32'h0000_0002);
+
     $display("[%0t] Run I2C private 2-byte read with slave data", $time);
     slave_read_data[0] <= 8'h11;
     slave_read_data[1] <= 8'h22;
+    slave_read_length <= 2;
     slave_ack_addr <= 1'b1;
     slave_read_en <= 1'b1;
     slave_i2c_read_mode <= 1'b1;
@@ -676,6 +897,7 @@ module tb_i3c_top;
 
     slave_ack_addr <= 1'b0;
     slave_read_en <= 1'b0;
+    slave_read_length <= 0;
     slave_i2c_read_mode <= 1'b0;
 
     apb_read(RESP_PORT, response);

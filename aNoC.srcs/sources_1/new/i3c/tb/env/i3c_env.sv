@@ -8,7 +8,9 @@ class i3c_env extends uvm_env;
   i3c_coverage cov;
 
   i3c_bus_agent      bus_agt;
+  i3c_cmd_predictor  predictor;
   i3c_bus_scoreboard bus_sb;
+  i3c_bus_coverage   bus_cov;
 
   function new(string name, uvm_component parent); 
     super.new(name, parent);
@@ -22,7 +24,9 @@ class i3c_env extends uvm_env;
     cov = i3c_coverage::type_id::create("cov",this);
 
     bus_agt = i3c_bus_agent::type_id::create("bus_agt", this);
+    predictor = i3c_cmd_predictor::type_id::create("predictor", this);
     bus_sb = i3c_bus_scoreboard::type_id::create("bus_sb", this);
+    bus_cov = i3c_bus_coverage::type_id::create("bus_cov", this);
   endfunction
 
   function void connect_phase(uvm_phase phase);
@@ -30,8 +34,20 @@ class i3c_env extends uvm_env;
     agt.mon.ap.connect(sb.ain);    // monitor 广播 → scoreboard 接收(从 test 搬来)
     agt.mon.ap.connect(cov.analysis_export);
     
+    // APB programming and the independent target response plan are combined
+    // by the predictor before the passive bus result is compared.
+    agt.mon.ap.connect(predictor.apb_fifo.analysis_export);
+    tgt.intent_ap.connect(predictor.target_fifo.analysis_export);
+    predictor.expected_ap.connect(bus_sb.expected_fifo.analysis_export);
+
+    // IBI is target-initiated, so its independent plan bypasses the APB
+    // command predictor and enters a dedicated scoreboard FIFO.
+    tgt.ibi_intent_ap.connect(bus_sb.ibi_intent_fifo.analysis_export);
+
+    // The protocol scoreboard also observes APB RX/CTRL accesses.
     agt.mon.ap.connect(bus_sb.apb_fifo.analysis_export);
     bus_agt.mon.ap.connect(bus_sb.bus_fifo.analysis_export);
+    bus_agt.mon.ap.connect(bus_cov.analysis_export);
   endfunction
   
   function void end_of_elaboration_phase(uvm_phase phase);

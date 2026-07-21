@@ -6,9 +6,12 @@
 //
 //   Broadcast: START → 0xFC(0x7E W) → CCC_CODE → [data_len bytes TX/RX] → STOP
 //   Direct:    START → 0xFC          → CCC_CODE → Sr → {DA,RW} → [data] → STOP
-//   ENTDAA:    START → 0xFC          → 0x07     → <entdaa loop> → STOP
+//   ENTDAA:    START → 0xFC          → 0x07     →
+//              {Sr → 0xFD → ACK → ID → DA/parity → ACK}* →
+//              Sr → 0xFD → NACK → STOP
 //
-// header byte 使用 is_addr=1，保持 OD 并检查 ACK/NACK。
+// 地址 byte 使用 is_addr=1，保持 OD 并检查 ACK/NACK。
+// CCC code 是 I3C write data byte，第 9 位是由 controller 发送的奇校验 T-bit。
 // data byte 根据方向设置 is_read。
 
 module ccc_handler (
@@ -54,6 +57,7 @@ module ccc_handler (
     input  logic [7:0]  ser_rx_data,
     input  logic        ser_byte_done,
     input  logic        ser_ack_ok,
+    input  logic        ser_read_continue,
     input  logic        ser_parity_err,
 
     // ENTDAA 直接驱动 Line Controller 的旁路接口
@@ -80,7 +84,7 @@ typedef enum logic [3:0] {
     S_IDLE        = 4'd0,
     S_START       = 4'd1,
     S_BCAST_ADDR  = 4'd2,   // 0xFC, is_addr=1
-    S_CCC_CODE    = 4'd3,   // ccc_code, is_addr=1
+    S_CCC_CODE    = 4'd3,   // ccc_code, I3C write data + parity T-bit
     S_ENTDAA_RUN  = 4'd4,   // 交给 entdaa 子模块
     S_SR          = 4'd5,   // Repeated Start，仅 direct CCC
     S_TARGET_ADDR = 4'd6,   // {target_addr, rw}, is_addr=1
@@ -152,8 +156,7 @@ always_comb begin
 
         S_CCC_CODE:
             if (cmd_issued && ser_byte_done) begin
-                if (!ser_ack_ok)                       next_state = S_STOP;
-                else if (ccc_code_r == ENTDAA_CODE)    next_state = S_ENTDAA_RUN;
+                if (ccc_code_r == ENTDAA_CODE)         next_state = S_ENTDAA_RUN;
                 else if (ccc_type_r)                   next_state = S_SR;
                 else if (byte_cnt_r != 8'd0)
                     next_state = S_DATA_TX;             // 带 data 的 broadcast
@@ -179,8 +182,10 @@ always_comb begin
                 next_state = S_STOP;
 
         S_DATA_RX:
-            if (cmd_issued && ser_byte_done && byte_cnt_r == 8'd1)
-                next_state = S_STOP;
+            if (cmd_issued && ser_byte_done) begin
+                if (!ser_read_continue || byte_cnt_r == 8'd1)
+                    next_state = S_STOP;
+            end
 
         S_STOP:
             if (cmd_issued && ser_cmd_ready) next_state = S_IDLE;
@@ -245,10 +250,16 @@ always_ff @(posedge clk or negedge rst_n) begin
                 cmd_issued <= 1'b0;
         end
 
-        // 记录任意 header byte 的 NACK
-        if ((state == S_BCAST_ADDR || state == S_CCC_CODE ||
-             state == S_TARGET_ADDR) &&
+        // 只有 broadcast/target address 阶段由 target 返回 ACK/NACK。
+        // CCC code 的第 9 位是 controller 发送的 parity T-bit，不是 ACK。
+        if ((state == S_BCAST_ADDR || state == S_TARGET_ADDR) &&
                 cmd_issued && ser_byte_done && !ser_ack_ok)
+            nack_r <= 1'b1;
+
+        // entdaa_done includes the normal final 7E/R NACK that means no
+        // unaddressed target remains.  Only entdaa_error (DAT exhausted or
+        // assigned-DA NACK) is an error response visible through ccc_nack.
+        if (state == S_ENTDAA_RUN && entdaa_error)
             nack_r <= 1'b1;
 
         // Data TX
@@ -304,8 +315,7 @@ assign ser_tx_data    = (state == S_BCAST_ADDR)  ? BCAST_ADDR_B     :
                         (state == S_TARGET_ADDR) ? {target_addr_r, target_rw_r} :
                                                    tx_byte;
 assign ser_is_read    = (state == S_DATA_RX);
-assign ser_is_addr    = (state == S_BCAST_ADDR || state == S_CCC_CODE ||
-                         state == S_TARGET_ADDR);
+assign ser_is_addr    = (state == S_BCAST_ADDR || state == S_TARGET_ADDR);
 assign ser_tbit_cont  = (byte_cnt_r > 8'd1);
 
 assign entdaa_lc_active     = (state == S_ENTDAA_RUN);

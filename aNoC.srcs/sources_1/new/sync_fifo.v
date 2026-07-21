@@ -27,10 +27,10 @@ module sync_fifo #(
         if (!rst_n) begin
             wr_ptr <= 0;
             rd_ptr <= 0;
-        end else if (do_wr) begin
+        end if (do_wr) begin
             wr_ptr <= wr_ptr + 1;
             mem[wr_ptr[ADDR-1:0]] <= wr_data;
-        end else if (do_rd) begin
+        end if (do_rd) begin
             rd_ptr <= rd_ptr + 1;
         end
     end

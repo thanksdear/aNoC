@@ -138,6 +138,7 @@ logic ccc_done, ccc_nack;
 logic        ser_cmd_ready;
 logic [7:0]  ser_rx_data;
 logic        ser_byte_done, ser_ack_ok, ser_parity_err;
+logic        ser_read_continue;
 
 // serializer、ENTDAA、IBI 共用 LC 反馈
 logic        lc_cmd_ready, lc_sda_rx, lc_sda_rx_valid;
@@ -320,6 +321,7 @@ assign ibi_status_clr = reg_wr_en && (reg_addr == `REG_IBI_STATUS)
                         && reg_wstrb[2] && reg_wdata[16];
 always_ff @(posedge PCLK or negedge PRESETn) begin
     if (!PRESETn)              irq_r <= 1'b0;
+    else if (sw_rst)           irq_r <= 1'b0;
     else if (resp_wr_en || ibi_done || ds_nack || ser_parity_err)
                                irq_r <= 1'b1;
     else if (ibi_status_clr)   irq_r <= 1'b0;   // 软件清 IBI_STATUS
@@ -402,6 +404,7 @@ frame_scheduler u_sched (
     .ser_tbit_cont(s_tbit_cont), .ser_cmd_valid(s_cmd_valid),
     .ser_cmd_ready(ser_cmd_ready), .ser_rx_data(ser_rx_data),
     .ser_byte_done(ser_byte_done), .ser_ack_ok(ser_ack_ok),
+    .ser_read_continue(ser_read_continue),
     .ser_parity_err(ser_parity_err)
 );
 
@@ -425,6 +428,7 @@ ccc_handler u_ccc (
 	    .ser_tbit_cont(c_tbit_cont), .ser_cmd_valid(c_cmd_valid),
 	    .ser_cmd_ready(ser_cmd_ready), .ser_rx_data(ser_rx_data),
 	    .ser_byte_done(ser_byte_done), .ser_ack_ok(ser_ack_ok),
+	    .ser_read_continue(ser_read_continue),
 	    .ser_parity_err(ser_parity_err),
 	    .entdaa_lc_active(entdaa_lc_active),
 	    .entdaa_lc_cmd(entdaa_lc_cmd),
@@ -445,6 +449,7 @@ byte_serializer u_ser (
     .cmd_valid(ser_cmd_valid), .cmd_ready(ser_cmd_ready),
     .rx_data(ser_rx_data), .byte_done(ser_byte_done),
     .ack_ok(ser_ack_ok), .parity_err(ser_parity_err),
+    .read_continue(ser_read_continue),
     .lc_cmd(bs_lc_cmd), .lc_sda_tx(bs_lc_sda_tx),
     .lc_cmd_valid(bs_lc_cmd_valid), .lc_cmd_ready(lc_cmd_ready),
     .lc_sda_rx(lc_sda_rx), .lc_sda_rx_valid(lc_sda_rx_valid),
