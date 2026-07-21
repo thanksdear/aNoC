@@ -227,6 +227,10 @@ endclass
 class i3c_bus_coverage extends uvm_subscriber #(i3c_bus_txn);
   `uvm_component_utils(i3c_bus_coverage)
 
+  // X/Z 是协议检查失败，不是需要命中的合法功能覆盖目标。VCS 2018 会从
+  // 标量 coverpoint 的显式 bin 中删除 X/Z 并产生 PBSI/CPBRM warning；
+  // scoreboard 已通过四态 !== 比较报告这些错误，因此这里只覆盖合法的 0/1。
+
   typedef enum bit [1:0] {
     NINTH_COUNTS_EMPTY,
     NINTH_COUNTS_ALIGNED,
@@ -417,8 +421,6 @@ class i3c_bus_coverage extends uvm_subscriber #(i3c_bus_txn);
     cp_addr_ninth: coverpoint addr_ninth_s iff (header_complete_s) {
       bins seg_addr_ninth_ack  = {1'b0};
       bins seg_addr_ninth_nack = {1'b1};
-      bins seg_addr_ninth_x    = {1'bx};
-      bins seg_addr_ninth_z    = {1'bz};
     }
 
     cp_start_boundary: coverpoint start_boundary_s {
@@ -456,9 +458,6 @@ class i3c_bus_coverage extends uvm_subscriber #(i3c_bus_txn);
 
     x_kind_addr_ack: cross cp_kind, cp_addr_ninth {
       ignore_bins unknown_kind = binsof(cp_kind.seg_kind_unknown);
-      ignore_bins unknown_ninth =
-        binsof(cp_addr_ninth.seg_addr_ninth_x) ||
-        binsof(cp_addr_ninth.seg_addr_ninth_z);
     }
   endgroup
 
@@ -477,8 +476,6 @@ class i3c_bus_coverage extends uvm_subscriber #(i3c_bus_txn);
     cp_raw_ninth: coverpoint data_ninth_s {
       bins d9_value_low  = {1'b0};
       bins d9_value_high = {1'b1};
-      bins d9_value_x    = {1'bx};
-      bins d9_value_z    = {1'bz};
     }
 
     cp_read_controller_low: coverpoint data_ninth_controller_low_s
@@ -516,7 +513,6 @@ class i3c_bus_coverage extends uvm_subscriber #(i3c_bus_txn);
     cp_header_ninth: coverpoint ibi_header_ninth_s {
       bins header_ack  = {1'b0};
       bins header_nack = {1'b1};
-      bins header_unknown = {1'bx, 1'bz};
     }
 
     cp_end_boundary: coverpoint ibi_end_boundary_s {
@@ -527,7 +523,6 @@ class i3c_bus_coverage extends uvm_subscriber #(i3c_bus_txn);
     cp_final_t: coverpoint ibi_t_s iff (ibi_mdb_count_s == 1) {
       bins ibi_t_end = {1'b0};
       bins ibi_t_continue = {1'b1};
-      bins ibi_t_unknown = {1'bx, 1'bz};
     }
 
     cp_controller_t_low: coverpoint ibi_controller_t_low_s
@@ -565,8 +560,6 @@ class i3c_bus_coverage extends uvm_subscriber #(i3c_bus_txn);
     cp_header_ninth: coverpoint entdaa_header_ninth_s {
       bins round_header_ack  = {1'b0};
       bins round_header_nack = {1'b1};
-      bins round_header_x    = {1'bx};
-      bins round_header_z    = {1'bz};
     }
 
     cp_parity: coverpoint entdaa_parity_status_s {
