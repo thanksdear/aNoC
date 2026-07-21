@@ -123,6 +123,151 @@
 
 ---
 
+## 2026-07-21：CMD-before-TX 运行时环形等待
+
+### 现象与实际证据
+
+- 当前 Git HEAD：`4b00573`。
+- 修改前的仿真停在时间 `20965000`，最后一条输出是 APB monitor 观察到：
+
+  ```text
+  OBSERVE APB WRITE addr=0x20 data=0x02240000
+  ```
+
+- `0x02240000` 按 `private_cmd()` 的定义解码为：private write、target
+  地址 `7'h12`、`rw=0`、长度 2 byte。
+- 结合该命令之前只有 `cfg_i3c_mode()`、没有 TX_PORT 写，可以定位到
+  `tb/env/i3c_agent/i3c_seq.sv` 的 `i3c_cmd_before_tx_seq`。
+- 仿真没有退出，是因为 sequence 卡在裸 `wait` 中，test objection 一直没有
+  drop；不是 scoreboard 的打印把仿真卡住。
+- 本次没有取得原始 sim log 路径、test seed 和 UVM report summary，因此该失败
+  目前以屏幕输出作为定位证据，尚不满足可复现回归记录要求。
+
+### 根因
+
+原来的执行顺序形成了三方环形等待：
+
+```text
+sequence 等 slave_dbg_ack_phase 清零后才写 TX
+target 必须等下一次 SCL 下降沿，才能在协议安全时刻释放地址 ACK
+RTL 在 S_DATA_WR 中等待 TX FIFO 非空，收到 TX 前不会产生下一次 SCL 下降沿
+```
+
+因此三方分别等待对方先动作，仿真时间不再前进到 sequence 的下一条 APB 操作。
+`i3c_cmd_predictor::bind_write_data()` 同时等待 TX 数据是该场景的正常行为，
+bus monitor 等待完整 STOP 也是正常行为，它们不是死锁根因。
+
+### 修改前后代码对照
+
+#### `i3c_cmd_before_tx_seq`：修改前（有环形等待）
+
+```systemverilog
+send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd2));
+wait (vif.slave_dbg_ack_phase === 1'b1);
+wait (vif.slave_dbg_ack_phase === 1'b0);
+
+repeat (4) @(posedge vif.clk);
+apb_read(REG_STATUS, rdata);
+expect_eq("CMD-before-TX waits after address", rdata,
+          32'h0000_0001, 32'h0000_0001);
+
+send_apb(WR, TX_PORT, 32'h0000_00d1);
+wait (vif.slave_dbg_write_byte === 8'hd1);
+```
+
+问题在于第二个 `wait`：sequence 要等 ACK phase 清零才写 `d1`，但 target
+只有在下一个 SCL 下降沿才能清零 ACK phase，而 RTL 又必须先收到 `d1` 才会
+产生这个 SCL 下降沿。
+
+#### `i3c_cmd_before_tx_seq`：修改后
+
+```systemverilog
+send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd2));
+wait (vif.slave_dbg_ack_phase === 1'b1);
+
+// TX FIFO 仍为空时，确认 DUT 已完成地址阶段并保持 busy。
+repeat (4) @(posedge vif.clk);
+apb_read(REG_STATUS, rdata);
+expect_eq("CMD-before-TX waits after address", rdata,
+          32'h0000_0001, 32'h0000_0001);
+
+// 先提供第一个 byte，RTL 才会产生下一次 SCL 下降沿。
+send_apb(WR, TX_PORT, 32'h0000_00d1);
+wait (vif.slave_dbg_ack_phase === 1'b0);
+wait (vif.slave_dbg_write_byte === 8'hd1);
+```
+
+关键变化不是取消 ACK 检查，而是把“等待 ACK phase 清零”移动到首个 TX byte
+写入之后。这样仍然检查了 ACK 的开始和结束，同时打破循环等待。
+
+#### `i3c_sw_reset_seq`：修改前（同类问题）
+
+```systemverilog
+vif.slave_ack_addr <= 1'b1;
+send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd1));
+wait (vif.slave_dbg_ack_phase === 1'b1);
+wait (vif.slave_dbg_ack_phase === 1'b0);
+apb_read(REG_STATUS, rdata);
+expect_eq("busy before sw_rst", rdata, 32'h1, 32'h1);
+
+send_apb(WR, REG_CTRL, 32'h0000_0007);
+```
+
+这个场景有意不提供 TX 数据，所以根本不会自然产生使 ACK phase 清零的下一次
+SCL 下降沿；等待清零会让软件复位命令永远无法发出。
+
+#### `i3c_sw_reset_seq`：修改后
+
+```systemverilog
+vif.slave_ack_addr <= 1'b1;
+send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd1));
+wait (vif.slave_dbg_ack_phase === 1'b1);
+
+// 确认命令确实阻塞在等待 TX，然后直接用 sw_rst 中止它。
+apb_read(REG_STATUS, rdata);
+expect_eq("busy before sw_rst", rdata, 32'h1, 32'h1);
+
+send_apb(WR, REG_CTRL, 32'h0000_0007);
+```
+
+这里不再等待 ACK phase 自然结束；软件复位会推进 reset epoch，同时终止 RTL、
+target model、monitor 和 predictor 中属于旧事务的状态。
+
+### 修改内容
+
+- 修改文件：`tb/env/i3c_agent/i3c_seq.sv`。
+- `i3c_cmd_before_tx_seq` 现在按照以下顺序执行：
+
+  1. 先发 CMD，并等待地址 ACK 阶段开始。
+  2. 在 TX FIFO 为空时读取 STATUS，确认 DUT 保持 busy。
+  3. 写入首个 TX byte，使 RTL 产生下一次 SCL 下降沿。
+  4. target 在 SCL 低期间释放地址 ACK，然后继续传输两个数据 byte。
+
+- `i3c_sw_reset_seq` 原来也在“无 TX 数据”场景等待 ACK phase 清零，会产生同样
+  的死锁；现改为地址 ACK 开始后直接检查 busy 并发出软件复位。
+- 没有把 target 改成在 SCL 高电平期间直接释放 SDA，因为这会形成
+  `SDA 上升且 SCL 为高`，可能被 monitor 和真实协议解释为 STOP。
+
+### 当前源码快照与验收状态
+
+- HEAD：`4b00573`，`i3c/rtl` 与 `i3c/tb` 当前有 1 个未提交修改文件。
+- 当前 RTL/TB dirty diff SHA-256：
+  `4d338f74ef017e82f4a222e932b3da2d109a63f4245c580ceb318ef435d88221`。
+- `git diff --check`：通过。
+- 证据等级：L1“已定位并修改”；尚未取得修改后的真实 VCS 编译和仿真结果，
+  不能标记为“验证通过”。
+
+### 待复验
+
+1. 重新编译，避免继续运行旧的 simulation image。
+2. 单独运行 `i3c_cmd_before_tx_test`，确认能够依次观察到 STATUS busy、TX
+   byte `d1/e2` 和 response。
+3. 运行 `i3c_sw_reset_test`，确认阻塞命令可被软件复位终止。
+4. 最后重新运行 `i3c_full_feature_test`，检查 `UVM_ERROR/UVM_FATAL`、scoreboard
+   残留和 test seed，并保存完整日志。
+
+---
+
 ## 后续日志模板
 
 ### YYYY-MM-DD：主题

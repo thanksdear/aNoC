@@ -312,13 +312,18 @@ class i3c_cmd_before_tx_seq extends i3c_seq;
     // finish the address and then remain busy in S_DATA_WR until TX arrives.
     send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd2));
     wait (vif.slave_dbg_ack_phase === 1'b1);
-    wait (vif.slave_dbg_ack_phase === 1'b0);
+
+    // 地址 ACK 必须等到下一次 SCL 下降沿才能安全释放；否则 SDA 在 SCL 高时
+    // 上升会被误认为 STOP。此时 TX FIFO 还是空的，RTL 停在 S_DATA_WR，尚不
+    // 会产生下一次 SCL 下降沿，因此不能在写首个 TX byte 前等待 ACK phase 清零。
     repeat (4) @(posedge vif.clk);
     apb_read(REG_STATUS, rdata);
     expect_eq("CMD-before-TX waits after address", rdata,
               32'h0000_0001, 32'h0000_0001);
 
     send_apb(WR, TX_PORT, 32'h0000_00d1);
+    // 首个 TX byte 到达后 RTL 才会继续拉低 SCL；target 随即释放地址 ACK。
+    wait (vif.slave_dbg_ack_phase === 1'b0);
     wait (vif.slave_dbg_write_byte === 8'hd1);
     apb_read(REG_STATUS, rdata);
     expect_eq("CMD-before-TX waits for byte1", rdata,
@@ -640,7 +645,9 @@ class i3c_sw_reset_seq extends i3c_seq;
     vif.slave_ack_addr <= 1'b1;
     send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd1));
     wait (vif.slave_dbg_ack_phase === 1'b1);
-    wait (vif.slave_dbg_ack_phase === 1'b0);
+    // 本场景故意不提供 TX 数据。地址 ACK 会一直保持到传输被软件复位中止，
+    // 所以不能等待 ACK phase 清零后才发 sw_rst，否则会形成与 CMD-before-TX
+    // 相同的环形等待。
     apb_read(REG_STATUS, rdata);
     expect_eq("busy before sw_rst", rdata, 32'h1, 32'h1);
 
