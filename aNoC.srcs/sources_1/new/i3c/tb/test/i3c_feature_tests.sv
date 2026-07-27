@@ -64,6 +64,12 @@ class i3c_full_feature_test extends i3c_base_test;
     repeat (20) @(posedge vif.clk);
   endtask
 
+  task run_one_virtual(uvm_sequence seq);
+    reset_dut();
+    run_virtual_seq(seq);
+    repeat (20) @(posedge vif.clk);
+  endtask
+
   task run_phase(uvm_phase phase);
     phase.raise_objection(this);
     run_one(i3c_apb_reg_access_seq::type_id::create("apb_reg_seq"));
@@ -72,10 +78,26 @@ class i3c_full_feature_test extends i3c_base_test;
     run_one(i3c_bus_timing_sweep_seq::type_id::create("bus_timing_sweep_seq"));
     run_one(i3c_sdr_private_write_seq::type_id::create("sdr_write_seq"));
     run_one(i3c_sdr_private_write_len4_seq::type_id::create("sdr_write_len4_seq"));
-    run_one(i3c_cmd_before_tx_seq::type_id::create("cmd_before_tx_seq"));
-    run_one(i3c_private_nack_seq::type_id::create("private_nack_seq"));
-    run_one(i3c_sdr_private_read_seq::type_id::create("sdr_read_seq"));
-    run_one(i3c_sdr_private_read_short_seq::type_id::create("sdr_short_read_seq"));
+    run_one_virtual(
+      i3c_target_agent_cmd_before_tx_vseq::type_id::create(
+        "cmd_before_tx_vseq"
+      )
+    );
+    run_one_virtual(
+      i3c_target_agent_private_nack_vseq::type_id::create(
+        "private_nack_vseq"
+      )
+    );
+    run_one_virtual(
+      i3c_target_agent_early_end_read_vseq::type_id::create(
+        "sdr_read_vseq"
+      )
+    );
+    run_one_virtual(
+      i3c_target_agent_short_read_vseq::type_id::create(
+        "sdr_short_read_vseq"
+      )
+    );
     run_one(i3c_i2c_private_write_seq::type_id::create("i2c_write_seq"));
     run_one(i3c_i2c_private_write_data_nack_seq::type_id::create(
       "i2c_write_data_nack_seq"
@@ -97,11 +119,11 @@ class i3c_cmd_before_tx_test extends i3c_base_test;
   `uvm_component_utils(i3c_cmd_before_tx_test)
   function new(string name, uvm_component parent); super.new(name, parent); endfunction
   task run_phase(uvm_phase phase);
-    i3c_cmd_before_tx_seq seq;
+    i3c_target_agent_cmd_before_tx_vseq vseq;
     phase.raise_objection(this);
     reset_dut();
-    seq = i3c_cmd_before_tx_seq::type_id::create("seq");
-    run_i3c_seq(seq);
+    vseq = i3c_target_agent_cmd_before_tx_vseq::type_id::create("vseq");
+    run_virtual_seq(vseq);
     repeat (20) @(posedge vif.clk);
     phase.drop_objection(this);
   endtask
@@ -139,11 +161,11 @@ class i3c_private_nack_test extends i3c_base_test;
   `uvm_component_utils(i3c_private_nack_test)
   function new(string name, uvm_component parent); super.new(name, parent); endfunction
   task run_phase(uvm_phase phase);
-    i3c_private_nack_seq seq;
+    i3c_target_agent_private_nack_vseq vseq;
     phase.raise_objection(this);
     reset_dut();
-    seq = i3c_private_nack_seq::type_id::create("seq");
-    run_i3c_seq(seq);
+    vseq = i3c_target_agent_private_nack_vseq::type_id::create("vseq");
+    run_virtual_seq(vseq);
     repeat (20) @(posedge vif.clk);
     phase.drop_objection(this);
   endtask
@@ -153,11 +175,12 @@ class i3c_sdr_private_read_test extends i3c_base_test;
   `uvm_component_utils(i3c_sdr_private_read_test)
   function new(string name, uvm_component parent); super.new(name, parent); endfunction
   task run_phase(uvm_phase phase);
-    i3c_sdr_private_read_seq seq;
+    i3c_target_agent_early_end_read_vseq vseq;
     phase.raise_objection(this);
     reset_dut();
-    seq = i3c_sdr_private_read_seq::type_id::create("seq");
-    run_i3c_seq(seq);
+    vseq =
+      i3c_target_agent_early_end_read_vseq::type_id::create("vseq");
+    run_virtual_seq(vseq);
     repeat (20) @(posedge vif.clk);
     phase.drop_objection(this);
   endtask
@@ -167,11 +190,11 @@ class i3c_sdr_private_read_short_test extends i3c_base_test;
   `uvm_component_utils(i3c_sdr_private_read_short_test)
   function new(string name, uvm_component parent); super.new(name, parent); endfunction
   task run_phase(uvm_phase phase);
-    i3c_sdr_private_read_short_seq seq;
+    i3c_target_agent_short_read_vseq vseq;
     phase.raise_objection(this);
     reset_dut();
-    seq = i3c_sdr_private_read_short_seq::type_id::create("seq");
-    run_i3c_seq(seq);
+    vseq = i3c_target_agent_short_read_vseq::type_id::create("vseq");
+    run_virtual_seq(vseq);
     repeat (20) @(posedge vif.clk);
     phase.drop_objection(this);
   endtask

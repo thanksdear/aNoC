@@ -461,6 +461,132 @@ class i3c_target_agent_private_write_seq extends i3c_seq;
   endtask
 endclass
 
+class i3c_target_agent_private_nack_seq extends i3c_seq;
+  `uvm_object_utils(i3c_target_agent_private_nack_seq)
+
+  function new(string name = "i3c_target_agent_private_nack_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    bit [31:0] rdata;
+
+    cfg_i3c_mode();
+    send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd0));
+    wait_status_idle();
+    wait_irq_asserted();
+    apb_read(RESP_PORT, rdata);
+    expect_eq("private NACK response", rdata,
+              32'h0000_0002, 32'h0000_0002);
+    apb_read(REG_ERR_STATUS, rdata);
+    expect_eq("private NACK ERR_STATUS set", rdata,
+              32'h0000_0002, 32'h0000_0002);
+    send_apb(WR, REG_ERR_STATUS, 32'h0000_0002);
+    apb_read(REG_ERR_STATUS, rdata);
+    expect_eq("private NACK ERR_STATUS clear", rdata,
+              32'h0000_0000, 32'h0000_0003);
+  endtask
+endclass
+
+class i3c_target_agent_short_read_seq extends i3c_seq;
+  `uvm_object_utils(i3c_target_agent_short_read_seq)
+
+  function new(string name = "i3c_target_agent_short_read_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    bit [31:0] rdata;
+
+    cfg_i3c_mode();
+    send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b1, 8'd3));
+    wait_status_idle();
+    apb_read(RESP_PORT, rdata);
+    expect_eq("SDR short-read response", rdata, 32'h0, 32'h3);
+    apb_read(RX_PORT, rdata);
+    expect_eq("SDR short-read RX byte0", rdata, 32'he1, 32'hff);
+  endtask
+endclass
+
+class i3c_target_agent_early_end_read_seq extends i3c_seq;
+  `uvm_object_utils(i3c_target_agent_early_end_read_seq)
+
+  function new(string name = "i3c_target_agent_early_end_read_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    bit [31:0] rdata;
+
+    cfg_i3c_mode();
+    send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b1, 8'd2));
+    wait_status_idle();
+    apb_read(RESP_PORT, rdata);
+    expect_eq("SDR private read response", rdata, 32'h0, 32'h3);
+    apb_read(RX_PORT, rdata);
+    expect_eq("SDR RX byte0", rdata, 32'h3c, 32'hff);
+    apb_read(RX_PORT, rdata);
+    expect_eq("SDR RX byte1", rdata, 32'ha7, 32'hff);
+  endtask
+endclass
+
+class i3c_target_agent_cmd_before_tx_seq extends i3c_seq;
+  `uvm_object_utils(i3c_target_agent_cmd_before_tx_seq)
+
+  function new(string name = "i3c_target_agent_cmd_before_tx_seq");
+    super.new(name);
+  endfunction
+
+  task wait_target_ack_phase(logic expected);
+    for (int timeout = 0; timeout < 2000; timeout++) begin
+      if (vif.slave_dbg_ack_phase === expected)
+        return;
+      @(posedge vif.clk);
+    end
+    `uvm_error(
+      "TIMEOUT",
+      $sformatf("target ACK phase did not become %0b", expected)
+    )
+  endtask
+
+  task wait_target_write_byte(logic [7:0] expected);
+    for (int timeout = 0; timeout < 2000; timeout++) begin
+      if (vif.slave_dbg_write_byte === expected)
+        return;
+      @(posedge vif.clk);
+    end
+    `uvm_error(
+      "TIMEOUT",
+      $sformatf("target did not observe write byte 0x%02h", expected)
+    )
+  endtask
+
+  task body();
+    bit [31:0] rdata;
+
+    cfg_i3c_mode();
+    send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd2));
+    wait_target_ack_phase(1'b1);
+
+    repeat (4) @(posedge vif.clk);
+    apb_read(REG_STATUS, rdata);
+    expect_eq("CMD-before-TX waits after address", rdata,
+              32'h0000_0001, 32'h0000_0001);
+
+    send_apb(WR, TX_PORT, 32'h0000_00d1);
+    wait_target_ack_phase(1'b0);
+    wait_target_write_byte(8'hd1);
+    apb_read(REG_STATUS, rdata);
+    expect_eq("CMD-before-TX waits for byte1", rdata,
+              32'h0000_0001, 32'h0000_0001);
+
+    send_apb(WR, TX_PORT, 32'h0000_00e2);
+    wait_status_idle();
+    apb_read(RESP_PORT, rdata);
+    expect_eq("CMD-before-TX response", rdata, 32'h0, 32'h3);
+  endtask
+endclass
+
 class i3c_i2c_private_write_seq extends i3c_seq;
   `uvm_object_utils(i3c_i2c_private_write_seq)
   function new(string name = "i3c_i2c_private_write_seq"); super.new(name); endfunction
