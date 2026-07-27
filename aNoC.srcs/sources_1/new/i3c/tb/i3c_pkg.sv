@@ -13,8 +13,13 @@ package i3c_pkg;
    `include "env/i3c_bus_agent/i3c_bus_monitor.sv"
    `include "env/i3c_bus_agent/i3c_bus_agent.sv"
    
+   // Active I3C target agent
+   `include "env/i3c_target_agent/i3c_target_txn.sv"
+   `include "env/i3c_target_agent/i3c_target_seq.sv"
+   `include "env/i3c_target_agent/i3c_target_driver.sv"
+   `include "env/i3c_target_agent/i3c_target_agent.sv"
+
    // Environment components
-   `include "env/i3c_target_model.sv"
    `include "env/i3c_scoreboard.sv"
    `include "env/i3c_coverage.sv"
    `include "env/i3c_env.sv"

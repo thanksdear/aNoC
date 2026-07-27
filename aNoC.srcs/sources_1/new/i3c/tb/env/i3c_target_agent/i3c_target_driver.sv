@@ -65,15 +65,13 @@ class i3c_ibi_intent extends uvm_object;
   endfunction
 endclass
 
-class i3c_target_model extends uvm_component;
-  `uvm_component_utils(i3c_target_model)
+class i3c_target_driver extends uvm_driver #(i3c_target_txn);
+  `uvm_component_utils(i3c_target_driver)
 
-  localparam logic [6:0] SLAVE_ADDR = 7'h12;
   localparam logic [7:0] CCC_ENTDAA = 8'h07;
-  localparam logic [63:0] ENTDAA_ID = 64'h1234_5678_9abc_de01;
-  localparam logic [6:0] ENTDAA_EXPECTED_DA = 7'h01;
 
   virtual i3c_if vif;
+  i3c_target_cfg cfg;
   uvm_analysis_port #(i3c_target_intent) intent_ap;
   uvm_analysis_port #(i3c_ibi_intent) ibi_intent_ap;
 
@@ -87,6 +85,8 @@ class i3c_target_model extends uvm_component;
     ibi_intent_ap = new("ibi_intent_ap", this);
     if (!uvm_config_db#(virtual i3c_if)::get(this, "", "vif", vif))
       `uvm_fatal("TGT", "target model 拿不到 vif")
+    if (!uvm_config_db#(i3c_target_cfg)::get(this, "", "cfg", cfg))
+      `uvm_fatal("TGT", "target driver 拿不到 cfg")
   endfunction
 
   task publish_intent(i3c_target_intent_kind_e kind,
@@ -154,13 +154,13 @@ class i3c_target_model extends uvm_component;
     intent.write_ack_count = 0;
     intent.read_length = 0;
     intent.entdaa_participate = participate;
-    intent.entdaa_id = ENTDAA_ID;
-    intent.entdaa_expected_da = ENTDAA_EXPECTED_DA;
+    intent.entdaa_id = cfg.entdaa_id;
+    intent.entdaa_expected_da = cfg.entdaa_expected_da;
     intent.entdaa_expect_da_ack = participate;
     intent_ap.write(intent);
   endtask
 
-  task run_phase(uvm_phase phase);
+  task respond_to_bus();
     longint unsigned target_epoch;
 
     forever begin
@@ -192,6 +192,98 @@ class i3c_target_model extends uvm_component;
       join_any
       disable target_reset_epoch;
     end
+  endtask
+
+  task apply_config(i3c_target_txn req);
+    vif.slave_ack_addr <= req.ack_addr;
+    vif.slave_read_en <= req.read_enable;
+    vif.slave_read_length <= req.read_data.size();
+    vif.slave_i2c_read_mode <= req.i2c_read_mode;
+    vif.slave_i3c_write_tbit_mode <= req.i3c_write_tbit_mode;
+    vif.slave_i2c_write_ack_count <= req.i2c_write_ack_count;
+    vif.ccc_ack_en <= req.ccc_ack_enable;
+    vif.ccc_direct_en <= req.ccc_direct_enable;
+    vif.entdaa_slave_en <= req.entdaa_participate;
+
+    if (req.read_data.size() > cfg.max_read_bytes)
+      `uvm_error(
+        "TGT_CFG",
+        $sformatf(
+          "legacy electrical target path supports at most 4 read bytes, got %0d",
+          req.read_data.size()
+        )
+      )
+    foreach (vif.slave_read_data[i])
+      vif.slave_read_data[i] <=
+        (i < req.read_data.size()) ? req.read_data[i] : 8'h00;
+  endtask
+
+  task drive_ibi(i3c_target_txn req);
+    logic [7:0] ibi_addr_byte;
+
+    ibi_addr_byte = {req.ibi_addr, 1'b1};
+    vif.ibi_plan_addr = req.ibi_addr;
+    vif.ibi_plan_expect_addr_ack = req.ibi_expect_addr_ack;
+    vif.ibi_plan_has_mdb = req.ibi_has_mdb;
+    vif.ibi_plan_mdb = req.ibi_mdb;
+    vif.ibi_plan_expect_controller_t_low = req.ibi_has_mdb;
+    vif.ibi_plan_valid = 1'b1;
+    @(posedge vif.clk);
+    vif.ibi_plan_valid = 1'b0;
+
+    wait (vif.scl_in && vif.sda_in);
+    vif.slave_drive_low <= 1'b1;
+
+    for (int bit_idx = 7; bit_idx >= 0; bit_idx--) begin
+      @(negedge vif.scl_in);
+      @(posedge vif.clk);
+      vif.slave_drive_low <= !ibi_addr_byte[bit_idx];
+      @(posedge vif.scl_in);
+    end
+
+    @(negedge vif.scl_in);
+    @(posedge vif.clk);
+    vif.slave_drive_low <= 1'b0;
+    @(posedge vif.scl_in);
+
+    if (req.ibi_has_mdb && req.ibi_expect_addr_ack) begin
+      for (int bit_idx = 7; bit_idx >= 0; bit_idx--) begin
+        @(negedge vif.scl_in);
+        @(posedge vif.clk);
+        vif.slave_drive_low <= !req.ibi_mdb[bit_idx];
+        @(posedge vif.scl_in);
+      end
+
+      @(negedge vif.scl_in);
+      @(posedge vif.clk);
+      vif.slave_drive_low <= 1'b1;
+      @(posedge vif.scl_in);
+    end
+
+    vif.slave_drive_low <= 1'b0;
+    wait (vif.scl_in && vif.sda_in);
+    repeat (4) @(posedge vif.clk);
+  endtask
+
+  task process_items();
+    forever begin
+      i3c_target_txn req;
+      seq_item_port.get_next_item(req);
+      case (req.op)
+        I3C_TARGET_CONFIG: apply_config(req);
+        I3C_TARGET_IBI:    drive_ibi(req);
+        default:
+          `uvm_error("TGT_DRV", "unsupported target operation")
+      endcase
+      seq_item_port.item_done();
+    end
+  endtask
+
+  task run_phase(uvm_phase phase);
+    fork
+      respond_to_bus();
+      process_items();
+    join
   endtask
 
   task init_slave();
@@ -281,7 +373,7 @@ class i3c_target_model extends uvm_component;
       vif.slave_dbg_ack_phase <= 1'b0;
 
       for (int bit_idx = 63; bit_idx >= 0; bit_idx--) begin
-        vif.slave_drive_low <= !ENTDAA_ID[bit_idx];
+        vif.slave_drive_low <= !cfg.entdaa_id[bit_idx];
         @(posedge vif.scl_in);
         @(negedge vif.scl_in);
       end
@@ -294,13 +386,13 @@ class i3c_target_model extends uvm_component;
       vif.slave_dbg_entdaa_da <= da_byte;
 
       da_valid = ((^da_byte) === 1'b1) &&
-                 (da_byte[7:1] === ENTDAA_EXPECTED_DA);
+                 (da_byte[7:1] === cfg.entdaa_expected_da);
       if (!da_valid)
         `uvm_error(
           "TGT_ENTDAA",
           $sformatf(
             "invalid assigned DA/parity: got byte=0x%02h expected DA=0x%02h",
-            da_byte, ENTDAA_EXPECTED_DA
+            da_byte, cfg.entdaa_expected_da
           )
         )
 
@@ -344,9 +436,10 @@ class i3c_target_model extends uvm_component;
 
     if (vif.expect_ccc_target) begin
       vif.expect_ccc_target <= 1'b0;
-      matched = vif.slave_ack_addr && (addr_byte[7:1] == SLAVE_ADDR);
+      matched = vif.slave_ack_addr &&
+                (addr_byte[7:1] == cfg.static_addr);
       vif.slave_dbg_matched <= matched;
-      publish_intent(TARGET_INTENT_CCC_DIRECT, SLAVE_ADDR,
+      publish_intent(TARGET_INTENT_CCC_DIRECT, cfg.static_addr,
                      vif.slave_read_en, vif.slave_ack_addr);
       @(negedge vif.scl_in);
       vif.slave_dbg_ack_phase <= 1'b1;
@@ -397,9 +490,10 @@ class i3c_target_model extends uvm_component;
         return;
       end
     end else begin
-      matched = vif.slave_ack_addr && (addr_byte[7:1] == SLAVE_ADDR);
+      matched = vif.slave_ack_addr &&
+                (addr_byte[7:1] == cfg.static_addr);
       vif.slave_dbg_matched <= matched;
-      publish_intent(TARGET_INTENT_PRIVATE, SLAVE_ADDR,
+      publish_intent(TARGET_INTENT_PRIVATE, cfg.static_addr,
                      vif.slave_read_en, vif.slave_ack_addr);
       @(negedge vif.scl_in);
       vif.slave_dbg_ack_phase <= 1'b1;

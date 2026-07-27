@@ -52,6 +52,7 @@ class i3c_monitor extends uvm_monitor;
       end
     endtask
 
+
     task run_phase(uvm_phase phase);
       fork
         observe_apb();

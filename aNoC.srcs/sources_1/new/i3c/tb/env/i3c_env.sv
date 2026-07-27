@@ -3,7 +3,7 @@ class i3c_env extends uvm_env;
   `uvm_component_utils(i3c_env)
 
   i3c_agent agt;
-  i3c_target_model tgt;
+  i3c_target_agent tgt;
   i3c_sb    sb;
   i3c_coverage cov;
 
@@ -19,7 +19,7 @@ class i3c_env extends uvm_env;
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
     agt = i3c_agent::type_id::create("agt", this);
-    tgt = i3c_target_model::type_id::create("tgt", this);
+    tgt = i3c_target_agent::type_id::create("tgt", this);
     sb  = i3c_sb::type_id::create("sb", this);
     cov = i3c_coverage::type_id::create("cov",this);
 

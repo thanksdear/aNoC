@@ -414,6 +414,31 @@ class i3c_sdr_private_read_short_seq extends i3c_seq;
   endtask
 endclass
 
+// APB/controller half of the target-agent smoke scenario.  Unlike the legacy
+// feature sequences, this sequence never writes target sideband signals; its
+// peer behavior must arrive through env.tgt.sqr.
+class i3c_target_agent_private_read_seq extends i3c_seq;
+  `uvm_object_utils(i3c_target_agent_private_read_seq)
+
+  function new(string name = "i3c_target_agent_private_read_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    bit [31:0] rdata;
+
+    cfg_i3c_mode();
+    send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b1, 8'd2));
+    wait_status_idle();
+    apb_read(RESP_PORT, rdata);
+    expect_eq("target-agent private read response", rdata, 32'h0, 32'h3);
+    apb_read(RX_PORT, rdata);
+    expect_eq("target-agent RX byte0", rdata, 32'hbe, 32'hff);
+    apb_read(RX_PORT, rdata);
+    expect_eq("target-agent RX byte1", rdata, 32'hef, 32'hff);
+  endtask
+endclass
+
 class i3c_i2c_private_write_seq extends i3c_seq;
   `uvm_object_utils(i3c_i2c_private_write_seq)
   function new(string name = "i3c_i2c_private_write_seq"); super.new(name); endfunction
