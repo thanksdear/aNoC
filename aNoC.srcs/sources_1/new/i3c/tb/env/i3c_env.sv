@@ -8,6 +8,7 @@ class i3c_env extends uvm_env;
   i3c_coverage cov;
 
   i3c_bus_agent      bus_agt;
+  i3c_virtual_sequencer vseqr;
   i3c_cmd_predictor  predictor;
   i3c_bus_scoreboard bus_sb;
   i3c_bus_coverage   bus_cov;
@@ -24,6 +25,7 @@ class i3c_env extends uvm_env;
     cov = i3c_coverage::type_id::create("cov",this);
 
     bus_agt = i3c_bus_agent::type_id::create("bus_agt", this);
+    vseqr = i3c_virtual_sequencer::type_id::create("vseqr", this);
     predictor = i3c_cmd_predictor::type_id::create("predictor", this);
     bus_sb = i3c_bus_scoreboard::type_id::create("bus_sb", this);
     bus_cov = i3c_bus_coverage::type_id::create("bus_cov", this);
@@ -48,6 +50,11 @@ class i3c_env extends uvm_env;
     agt.mon.ap.connect(bus_sb.apb_fifo.analysis_export);
     bus_agt.mon.ap.connect(bus_sb.bus_fifo.analysis_export);
     bus_agt.mon.ap.connect(bus_cov.analysis_export);
+
+    // Virtual sequences coordinate the two active agents through typed
+    // sequencer handles; no sequence needs to configure its peer through vif.
+    vseqr.apb_sqr = agt.sqr;
+    vseqr.target_sqr = tgt.sqr;
   endfunction
   
   function void end_of_elaboration_phase(uvm_phase phase);

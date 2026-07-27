@@ -185,29 +185,33 @@ class i3c_target_agent_smoke_test extends i3c_base_test;
   endfunction
 
   task run_phase(uvm_phase phase);
-    i3c_target_seq                    target_cfg;
-    i3c_target_idle_seq               target_idle;
-    i3c_target_agent_private_read_seq controller_seq;
+    i3c_target_agent_private_read_vseq vseq;
 
     phase.raise_objection(this);
     reset_dut();
+    vseq =
+      i3c_target_agent_private_read_vseq::type_id::create("vseq");
+    run_virtual_seq(vseq);
+    repeat (20) @(posedge vif.clk);
+    phase.drop_objection(this);
+  endtask
+endclass
 
-    target_cfg = i3c_target_seq::type_id::create("target_cfg");
-    target_cfg.req = i3c_target_txn::type_id::create("target_cfg_req");
-    target_cfg.req.op = I3C_TARGET_CONFIG;
-    target_cfg.req.ack_addr = 1'b1;
-    target_cfg.req.read_enable = 1'b1;
-    target_cfg.req.read_data = new[2];
-    target_cfg.req.read_data[0] = 8'hbe;
-    target_cfg.req.read_data[1] = 8'hef;
-    run_target_seq(target_cfg);
+class i3c_target_agent_private_write_test extends i3c_base_test;
+  `uvm_component_utils(i3c_target_agent_private_write_test)
 
-    controller_seq =
-      i3c_target_agent_private_read_seq::type_id::create("controller_seq");
-    run_i3c_seq(controller_seq);
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
 
-    target_idle = i3c_target_idle_seq::type_id::create("target_idle");
-    run_target_seq(target_idle);
+  task run_phase(uvm_phase phase);
+    i3c_target_agent_private_write_vseq vseq;
+
+    phase.raise_objection(this);
+    reset_dut();
+    vseq =
+      i3c_target_agent_private_write_vseq::type_id::create("vseq");
+    run_virtual_seq(vseq);
     repeat (20) @(posedge vif.clk);
     phase.drop_objection(this);
   endtask

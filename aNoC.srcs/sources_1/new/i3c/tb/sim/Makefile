@@ -18,6 +18,7 @@ REGRESSION_TESTS ?= \
 	i3c_sdr_private_read_test \
 	i3c_sdr_private_read_short_test \
 	i3c_target_agent_smoke_test \
+	i3c_target_agent_private_write_test \
 	i3c_i2c_private_write_test \
 	i3c_i2c_private_write_data_nack_test \
 	i3c_i2c_private_read_test \

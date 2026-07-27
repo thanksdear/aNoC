@@ -35,6 +35,10 @@ class i3c_base_test extends uvm_test;
     seq.start(env.tgt.sqr);
   endtask
 
+  virtual task run_virtual_seq(uvm_sequence seq);
+    seq.start(env.vseqr);
+  endtask
+
   task run_phase(uvm_phase phase);
     i3c_seq seq;
     phase.raise_objection(this);

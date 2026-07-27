@@ -1,0 +1,85 @@
+class i3c_virtual_seq extends uvm_sequence;
+  `uvm_object_utils(i3c_virtual_seq)
+  `uvm_declare_p_sequencer(i3c_virtual_sequencer)
+
+  function new(string name = "i3c_virtual_seq");
+    super.new(name);
+  endfunction
+
+  task pre_body();
+    super.pre_body();
+    if (p_sequencer.apb_sqr == null)
+      `uvm_fatal("VSEQ", "virtual sequencer APB handle is null")
+    if (p_sequencer.target_sqr == null)
+      `uvm_fatal("VSEQ", "virtual sequencer target handle is null")
+  endtask
+
+  task configure_target(i3c_target_txn cfg_req);
+    i3c_target_seq cfg_seq;
+
+    cfg_seq = i3c_target_seq::type_id::create("cfg_seq");
+    cfg_seq.req = cfg_req;
+    cfg_seq.start(p_sequencer.target_sqr);
+  endtask
+
+  task idle_target();
+    i3c_target_idle_seq idle_seq;
+
+    idle_seq = i3c_target_idle_seq::type_id::create("idle_seq");
+    idle_seq.start(p_sequencer.target_sqr);
+  endtask
+endclass
+
+class i3c_target_agent_private_read_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_target_agent_private_read_vseq)
+
+  function new(string name = "i3c_target_agent_private_read_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_target_txn                    cfg_req;
+    i3c_target_agent_private_read_seq controller_seq;
+
+    cfg_req = i3c_target_txn::type_id::create("cfg_req");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ack_addr = 1'b1;
+    cfg_req.read_enable = 1'b1;
+    cfg_req.read_data = new[2];
+    cfg_req.read_data[0] = 8'hbe;
+    cfg_req.read_data[1] = 8'hef;
+    configure_target(cfg_req);
+
+    controller_seq =
+      i3c_target_agent_private_read_seq::type_id::create("controller_seq");
+    controller_seq.start(p_sequencer.apb_sqr);
+    idle_target();
+  endtask
+endclass
+
+class i3c_target_agent_private_write_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_target_agent_private_write_vseq)
+
+  function new(string name = "i3c_target_agent_private_write_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_target_txn                     cfg_req;
+    i3c_target_agent_private_write_seq controller_seq;
+
+    cfg_req = i3c_target_txn::type_id::create("cfg_req");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ack_addr = 1'b1;
+    // The legacy electrical responder uses this count as the number of write
+    // bytes to observe.  In I3C mode it releases, rather than ACKs, each T-bit.
+    cfg_req.i2c_write_ack_count = 2;
+    cfg_req.i3c_write_tbit_mode = 1'b1;
+    configure_target(cfg_req);
+
+    controller_seq =
+      i3c_target_agent_private_write_seq::type_id::create("controller_seq");
+    controller_seq.start(p_sequencer.apb_sqr);
+    idle_target();
+  endtask
+endclass

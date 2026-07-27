@@ -439,6 +439,28 @@ class i3c_target_agent_private_read_seq extends i3c_seq;
   endtask
 endclass
 
+class i3c_target_agent_private_write_seq extends i3c_seq;
+  `uvm_object_utils(i3c_target_agent_private_write_seq)
+
+  function new(string name = "i3c_target_agent_private_write_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    bit [31:0] rdata;
+
+    cfg_i3c_mode();
+    send_apb(WR, TX_PORT, 32'h0000_005a);
+    send_apb(WR, TX_PORT, 32'h0000_00c3);
+    send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd2));
+    wait_status_idle();
+    apb_read(RESP_PORT, rdata);
+    expect_eq("target-agent private write response", rdata, 32'h0, 32'h3);
+    apb_read(REG_ERR_STATUS, rdata);
+    expect_eq("target-agent private write ERR_STATUS", rdata, 32'h0, 32'h3);
+  endtask
+endclass
+
 class i3c_i2c_private_write_seq extends i3c_seq;
   `uvm_object_utils(i3c_i2c_private_write_seq)
   function new(string name = "i3c_i2c_private_write_seq"); super.new(name); endfunction

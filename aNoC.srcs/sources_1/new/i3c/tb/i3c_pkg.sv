@@ -18,6 +18,8 @@ package i3c_pkg;
    `include "env/i3c_target_agent/i3c_target_seq.sv"
    `include "env/i3c_target_agent/i3c_target_driver.sv"
    `include "env/i3c_target_agent/i3c_target_agent.sv"
+   `include "env/i3c_virtual_sequencer.sv"
+   `include "env/i3c_virtual_seq.sv"
 
    // Environment components
    `include "env/i3c_scoreboard.sv"
