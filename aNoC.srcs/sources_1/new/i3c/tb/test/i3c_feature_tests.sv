@@ -16,11 +16,11 @@ class i3c_bus_timing_test extends i3c_base_test;
   `uvm_component_utils(i3c_bus_timing_test)
   function new(string name, uvm_component parent); super.new(name, parent); endfunction
   task run_phase(uvm_phase phase);
-    i3c_bus_timing_seq seq;
+    i3c_bus_timing_vseq vseq;
     phase.raise_objection(this);
     reset_dut();
-    seq = i3c_bus_timing_seq::type_id::create("seq");
-    run_i3c_seq(seq);
+    vseq = i3c_bus_timing_vseq::type_id::create("vseq");
+    run_virtual_seq(vseq);
     repeat (20) @(posedge vif.clk);
     phase.drop_objection(this);
   endtask
@@ -74,8 +74,12 @@ class i3c_full_feature_test extends i3c_base_test;
     phase.raise_objection(this);
     run_one(i3c_apb_reg_access_seq::type_id::create("apb_reg_seq"));
     run_one(i3c_apb_strb_seq::type_id::create("apb_strb_seq"));
-    run_one(i3c_bus_timing_seq::type_id::create("bus_timing_seq"));
-    run_one(i3c_bus_timing_sweep_seq::type_id::create("bus_timing_sweep_seq"));
+    run_one_virtual(
+      i3c_bus_timing_vseq::type_id::create("bus_timing_vseq")
+    );
+    run_one_virtual(
+      i3c_bus_timing_sweep_vseq::type_id::create("bus_timing_sweep_vseq")
+    );
     run_one_virtual(
       i3c_sdr_private_write_vseq::type_id::create("sdr_write_vseq")
     );
@@ -124,11 +128,18 @@ class i3c_full_feature_test extends i3c_base_test;
     run_one_virtual(
       i3c_direct_ccc_write_vseq::type_id::create("direct_ccc_write_vseq")
     );
-    run_one(i3c_entdaa_seq::type_id::create("entdaa_seq"));
-    run_one(i3c_sw_reset_seq::type_id::create("sw_reset_seq"));
-    run_one(i3c_irq_access_seq::type_id::create("irq_seq"));
-    run_one(i3c_ibi_no_payload_seq::type_id::create("ibi_no_payload_seq"));
-    run_one(i3c_ibi_payload_seq::type_id::create("ibi_payload_seq"));
+    run_one_virtual(i3c_entdaa_vseq::type_id::create("entdaa_vseq"));
+    run_one_virtual(i3c_sw_reset_vseq::type_id::create("sw_reset_vseq"));
+    run_one_virtual(i3c_irq_access_vseq::type_id::create("irq_vseq"));
+    run_one_virtual(
+      i3c_polling_access_vseq::type_id::create("polling_access_vseq")
+    );
+    run_one_virtual(
+      i3c_ibi_no_payload_vseq::type_id::create("ibi_no_payload_vseq")
+    );
+    run_one_virtual(
+      i3c_ibi_payload_vseq::type_id::create("ibi_payload_vseq")
+    );
     phase.drop_objection(this);
   endtask
 endclass
@@ -151,11 +162,11 @@ class i3c_bus_timing_sweep_test extends i3c_base_test;
   `uvm_component_utils(i3c_bus_timing_sweep_test)
   function new(string name, uvm_component parent); super.new(name, parent); endfunction
   task run_phase(uvm_phase phase);
-    i3c_bus_timing_sweep_seq seq;
+    i3c_bus_timing_sweep_vseq vseq;
     phase.raise_objection(this);
     reset_dut();
-    seq = i3c_bus_timing_sweep_seq::type_id::create("seq");
-    run_i3c_seq(seq);
+    vseq = i3c_bus_timing_sweep_vseq::type_id::create("vseq");
+    run_virtual_seq(vseq);
     repeat (20) @(posedge vif.clk);
     phase.drop_objection(this);
   endtask
@@ -326,11 +337,11 @@ class i3c_entdaa_test extends i3c_base_test;
   `uvm_component_utils(i3c_entdaa_test)
   function new(string name, uvm_component parent); super.new(name, parent); endfunction
   task run_phase(uvm_phase phase);
-    i3c_entdaa_seq seq;
+    i3c_entdaa_vseq vseq;
     phase.raise_objection(this);
     reset_dut();
-    seq = i3c_entdaa_seq::type_id::create("seq");
-    run_i3c_seq(seq);
+    vseq = i3c_entdaa_vseq::type_id::create("vseq");
+    run_virtual_seq(vseq);
     repeat (20) @(posedge vif.clk);
     phase.drop_objection(this);
   endtask
@@ -340,11 +351,11 @@ class i3c_ibi_no_payload_test extends i3c_base_test;
   `uvm_component_utils(i3c_ibi_no_payload_test)
   function new(string name, uvm_component parent); super.new(name, parent); endfunction
   task run_phase(uvm_phase phase);
-    i3c_ibi_no_payload_seq seq;
+    i3c_ibi_no_payload_vseq vseq;
     phase.raise_objection(this);
     reset_dut();
-    seq = i3c_ibi_no_payload_seq::type_id::create("seq");
-    run_i3c_seq(seq);
+    vseq = i3c_ibi_no_payload_vseq::type_id::create("vseq");
+    run_virtual_seq(vseq);
     repeat (20) @(posedge vif.clk);
     phase.drop_objection(this);
   endtask
@@ -354,11 +365,11 @@ class i3c_ibi_payload_test extends i3c_base_test;
   `uvm_component_utils(i3c_ibi_payload_test)
   function new(string name, uvm_component parent); super.new(name, parent); endfunction
   task run_phase(uvm_phase phase);
-    i3c_ibi_payload_seq seq;
+    i3c_ibi_payload_vseq vseq;
     phase.raise_objection(this);
     reset_dut();
-    seq = i3c_ibi_payload_seq::type_id::create("seq");
-    run_i3c_seq(seq);
+    vseq = i3c_ibi_payload_vseq::type_id::create("vseq");
+    run_virtual_seq(vseq);
     repeat (20) @(posedge vif.clk);
     phase.drop_objection(this);
   endtask
@@ -368,11 +379,11 @@ class i3c_irq_access_test extends i3c_base_test;
   `uvm_component_utils(i3c_irq_access_test)
   function new(string name, uvm_component parent); super.new(name, parent); endfunction
   task run_phase(uvm_phase phase);
-    i3c_irq_access_seq seq;
+    i3c_irq_access_vseq vseq;
     phase.raise_objection(this);
     reset_dut();
-    seq = i3c_irq_access_seq::type_id::create("seq");
-    run_i3c_seq(seq);
+    vseq = i3c_irq_access_vseq::type_id::create("vseq");
+    run_virtual_seq(vseq);
     repeat (20) @(posedge vif.clk);
     phase.drop_objection(this);
   endtask
@@ -382,11 +393,11 @@ class i3c_sw_reset_test extends i3c_base_test;
   `uvm_component_utils(i3c_sw_reset_test)
   function new(string name, uvm_component parent); super.new(name, parent); endfunction
   task run_phase(uvm_phase phase);
-    i3c_sw_reset_seq seq;
+    i3c_sw_reset_vseq vseq;
     phase.raise_objection(this);
     reset_dut();
-    seq = i3c_sw_reset_seq::type_id::create("seq");
-    run_i3c_seq(seq);
+    vseq = i3c_sw_reset_vseq::type_id::create("vseq");
+    run_virtual_seq(vseq);
     repeat (20) @(posedge vif.clk);
     phase.drop_objection(this);
   endtask
@@ -396,11 +407,11 @@ class i3c_polling_access_test extends i3c_base_test;
   `uvm_component_utils(i3c_polling_access_test)
   function new(string name, uvm_component parent); super.new(name, parent); endfunction
   task run_phase(uvm_phase phase);
-    i3c_polling_access_seq seq;
+    i3c_polling_access_vseq vseq;
     phase.raise_objection(this);
     reset_dut();
-    seq = i3c_polling_access_seq::type_id::create("seq");
-    run_i3c_seq(seq);
+    vseq = i3c_polling_access_vseq::type_id::create("vseq");
+    run_virtual_seq(vseq);
     repeat (20) @(posedge vif.clk);
     phase.drop_objection(this);
   endtask

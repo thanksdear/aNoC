@@ -10,7 +10,7 @@ class i3c_target_cfg extends uvm_object;
   logic [6:0]              static_addr = 7'h12;
   logic [63:0]             entdaa_id = 64'h1234_5678_9abc_de01;
   logic [6:0]              entdaa_expected_da = 7'h01;
-  int unsigned             max_read_bytes = 4;
+  int unsigned             max_read_bytes = 256;
 
   function new(string name = "i3c_target_cfg");
     super.new(name);

@@ -118,8 +118,6 @@ class i3c_seq extends uvm_sequence #(i3c_txn);
     end
   endtask
 
-  extern task send_ibi(bit [6:0] addr, bit has_mdb, bit [7:0] mdb);
-
   function bit [31:0] private_cmd(bit [6:0] addr, bit rw, bit [7:0] len);
     private_cmd = '0;
     private_cmd[31:24] = len;
@@ -248,10 +246,8 @@ class i3c_bus_timing_seq extends i3c_seq;
     apb_read(REG_BUS_TIMING_1, rdata);
     expect_eq("timing SDA hold", rdata, 32'd3, 32'hffff);
     send_apb(WR, TX_PORT, 32'h0000_005a);
-    vif.slave_ack_addr <= 1'b1;
     send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd1));
     wait_status_idle();
-    vif.slave_ack_addr <= 1'b0;
     apb_read(RESP_PORT, rdata);
     expect_eq("timing transfer response", rdata, 32'h0, 32'h3);
   endtask
@@ -395,7 +391,7 @@ class i3c_cmd_before_tx_seq extends i3c_seq;
 
   task wait_target_ack_phase(logic expected);
     for (int timeout = 0; timeout < 2000; timeout++) begin
-      if (vif.slave_dbg_ack_phase === expected)
+      if (vif.target_dbg_ack_phase === expected)
         return;
       @(posedge vif.clk);
     end
@@ -407,7 +403,7 @@ class i3c_cmd_before_tx_seq extends i3c_seq;
 
   task wait_target_write_byte(logic [7:0] expected);
     for (int timeout = 0; timeout < 2000; timeout++) begin
-      if (vif.slave_dbg_write_byte === expected)
+      if (vif.target_dbg_write_byte === expected)
         return;
       @(posedge vif.clk);
     end
@@ -553,9 +549,9 @@ class i3c_direct_ccc_write_seq extends i3c_seq;
     send_apb(WR, CMD_PORT, ccc_cmd(1'b1, CCC_SETDASA, SLAVE_ADDR, 1'b0, 8'd1));
     wait_status_idle();
     expect_eq("direct CCC write code observed",
-              {24'h0, vif.slave_dbg_ccc_byte}, {24'h0, CCC_SETDASA}, 32'hff);
+              {24'h0, vif.target_dbg_ccc_byte}, {24'h0, CCC_SETDASA}, 32'hff);
     expect_eq("SETDASA payload observed",
-              {24'h0, vif.slave_dbg_write_byte},
+              {24'h0, vif.target_dbg_write_byte},
               {24'h0, NEW_DYNAMIC_ADDR, 1'b0}, 32'hff);
     apb_read(RESP_PORT, rdata);
     expect_eq("direct CCC write response", rdata, 32'h0, 32'h3);
@@ -568,13 +564,8 @@ class i3c_entdaa_seq extends i3c_seq;
   task body();
     bit [31:0] rdata;
     cfg_i3c_mode();
-    vif.ccc_ack_en <= 1'b1;
-    vif.ccc_direct_en <= 1'b0;
-    vif.entdaa_slave_en <= 1'b1;
     send_apb(WR, CMD_PORT, ccc_cmd(1'b0, CCC_ENTDAA, 7'h00, 1'b0, 8'd0));
     wait_status_idle();
-    vif.ccc_ack_en <= 1'b0;
-    vif.entdaa_slave_en <= 1'b0;
     apb_read(RESP_PORT, rdata);
     expect_eq("ENTDAA response", rdata, 32'h0, 32'h3);
     apb_read(REG_ENTDAA_STATUS, rdata);
@@ -588,14 +579,18 @@ endclass
 
 class i3c_ibi_no_payload_seq extends i3c_seq;
   `uvm_object_utils(i3c_ibi_no_payload_seq)
-  function new(string name = "i3c_ibi_no_payload_seq"); super.new(name); endfunction
+  uvm_event target_ready;
+
+  function new(string name = "i3c_ibi_no_payload_seq");
+    super.new(name);
+    target_ready = new("target_ready");
+  endfunction
+
   task body();
     bit [31:0] rdata;
     cfg_i3c_mode();
     send_apb(WR, REG_CTRL, 32'h0000_000b);
-    fork
-      send_ibi(SLAVE_ADDR, 1'b0, 8'h00);
-    join_none
+    target_ready.trigger();
     wait_irq_asserted();
     apb_read(REG_IBI_STATUS, rdata);
     expect_eq("IBI no MDB status", rdata, 32'h0001_0012, 32'h0001_ffff);
@@ -605,15 +600,19 @@ endclass
 
 class i3c_ibi_payload_seq extends i3c_seq;
   `uvm_object_utils(i3c_ibi_payload_seq)
-  function new(string name = "i3c_ibi_payload_seq"); super.new(name); endfunction
+  uvm_event target_ready;
+
+  function new(string name = "i3c_ibi_payload_seq");
+    super.new(name);
+    target_ready = new("target_ready");
+  endfunction
+
   task body();
     bit [31:0] rdata;
     cfg_i3c_mode();
     send_apb(WR, REG_CTRL, 32'h0000_001b);
     repeat (8) @(posedge vif.clk);
-    fork
-      send_ibi(SLAVE_ADDR, 1'b1, 8'h5a);
-    join_none
+    target_ready.trigger();
     wait_irq_asserted();
     apb_read(REG_IBI_STATUS, rdata);
     expect_eq("IBI MDB status", rdata, 32'h0001_0192, 32'h0001_ffff);
@@ -623,23 +622,65 @@ class i3c_ibi_payload_seq extends i3c_seq;
   endtask
 endclass
 
-class i3c_polling_access_seq extends i3c_sdr_private_write_seq;
+class i3c_polling_access_seq extends i3c_seq;
   `uvm_object_utils(i3c_polling_access_seq)
   function new(string name = "i3c_polling_access_seq"); super.new(name); endfunction
+  task body();
+    bit [31:0] rdata;
+    bit        busy_seen;
+
+    cfg_i3c_mode();
+    send_apb(WR, TX_PORT, 32'h0000_00a5);
+    send_apb(WR, TX_PORT, 32'h0000_005a);
+    send_apb(WR, TX_PORT, 32'h0000_00c3);
+    send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd3));
+
+    busy_seen = 1'b0;
+    for (int timeout = 0; timeout < 2000; timeout++) begin
+      apb_read(REG_STATUS, rdata);
+      if (rdata[0])
+        busy_seen = 1'b1;
+      if (busy_seen && !rdata[0])
+        break;
+    end
+    if (!busy_seen)
+      `uvm_error("POLL", "STATUS.busy was never observed asserted")
+    if (rdata[0])
+      `uvm_error("POLL", "STATUS.busy did not clear before polling timeout")
+
+    apb_read(RESP_PORT, rdata);
+    expect_eq("polling response", rdata, 32'h0, 32'h3);
+  endtask
 endclass
 
 class i3c_sw_reset_seq extends i3c_seq;
   `uvm_object_utils(i3c_sw_reset_seq)
-  function new(string name = "i3c_sw_reset_seq"); super.new(name); endfunction
+  uvm_event post_reset_target_ready;
+  uvm_event post_reset_target_configured;
+
+  function new(string name = "i3c_sw_reset_seq");
+    super.new(name);
+    post_reset_target_ready = new("post_reset_target_ready");
+    post_reset_target_configured = new("post_reset_target_configured");
+  endfunction
+
+  task wait_target_ack();
+    for (int timeout = 0; timeout < 2000; timeout++) begin
+      if (vif.target_dbg_ack_phase === 1'b1)
+        return;
+      @(posedge vif.clk);
+    end
+    `uvm_error("TIMEOUT", "target ACK phase was not observed before sw_rst")
+  endtask
+
   task body();
     bit [31:0] rdata;
     cfg_i3c_mode(16'd7, 16'd5, 16'd4);
 
     // Leave a write command blocked waiting for TX, then reset it.  This
     // exercises the DUT FIFO reset and the verification-side epoch abort.
-    vif.slave_ack_addr <= 1'b1;
     send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd1));
-    wait (vif.slave_dbg_ack_phase === 1'b1);
+    wait_target_ack();
     // 本场景故意不提供 TX 数据。地址 ACK 会一直保持到传输被软件复位中止，
     // 所以不能等待 ACK phase 清零后才发 sw_rst，否则会形成与 CMD-before-TX
     // 相同的环形等待。
@@ -647,7 +688,11 @@ class i3c_sw_reset_seq extends i3c_seq;
     expect_eq("busy before sw_rst", rdata, 32'h1, 32'h1);
 
     send_apb(WR, REG_CTRL, 32'h0000_0007);
-    vif.slave_ack_addr <= 1'b0;
+    // Let the target driver's reset-epoch thread release SDA and clear its
+    // previous configuration before the virtual sequence applies the new one.
+    repeat (2) @(posedge vif.clk);
+    post_reset_target_ready.trigger();
+    post_reset_target_configured.wait_on();
     // sync_fifo clears on the clock following the CSR reset pulse.
     repeat (3) @(posedge vif.clk);
     apb_read(REG_CTRL, rdata);
@@ -659,10 +704,8 @@ class i3c_sw_reset_seq extends i3c_seq;
 
     // A clean post-reset command proves that the target, monitor, predictor
     // and RTL dispatcher all left the aborted epoch.
-    vif.slave_ack_addr <= 1'b1;
     send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd0));
     wait_status_idle();
-    vif.slave_ack_addr <= 1'b0;
     apb_read(RESP_PORT, rdata);
     expect_eq("post-sw_rst response", rdata, 32'h0, 32'h3);
   endtask
@@ -679,10 +722,8 @@ class i3c_bus_timing_sweep_seq extends i3c_seq;
     expect_eq($sformatf("timing sweep high/low[%0d]", case_id), rdata, {high, low});
     apb_read(REG_BUS_TIMING_1, rdata);
     expect_eq($sformatf("timing sweep hold[%0d]", case_id), rdata, {16'd0, hold}, 32'h0000_ffff);
-    vif.slave_ack_addr <= 1'b1;
     send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd0));
     wait_status_idle();
-    vif.slave_ack_addr <= 1'b0;
     apb_read(RESP_PORT, rdata);
     expect_eq($sformatf("timing sweep response[%0d]", case_id), rdata, 32'h0, 32'h3);
   endtask
@@ -700,10 +741,8 @@ class i3c_irq_access_seq extends i3c_seq;
   task body();
     bit [31:0] rdata;
     cfg_i3c_mode();
-    vif.slave_ack_addr <= 1'b1;
     send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd0));
     wait_irq_asserted();
-    vif.slave_ack_addr <= 1'b0;
     apb_read(RESP_PORT, rdata);
     expect_eq("IRQ response", rdata, 32'h0, 32'h3);
     repeat (2) @(posedge vif.clk);
@@ -711,57 +750,3 @@ class i3c_irq_access_seq extends i3c_seq;
       `uvm_error("IRQ", "IRQ did not clear after RESP read")
   endtask
 endclass
-
-task i3c_seq::send_ibi(bit [6:0] addr, bit has_mdb, bit [7:0] mdb);
-  bit [7:0] ibi_addr_byte;
-  ibi_addr_byte = {addr, 1'b1};
-
-  // Publish the target's plan before creating the target-initiated START.
-  // This path is intentionally separate from command target intents because
-  // an IBI has no CMD_PORT descriptor to pair with.
-  vif.ibi_plan_addr = addr;
-  vif.ibi_plan_expect_addr_ack = 1'b1;
-  vif.ibi_plan_has_mdb = has_mdb;
-  vif.ibi_plan_mdb = mdb;
-  vif.ibi_plan_expect_controller_t_low = has_mdb;
-  vif.ibi_plan_valid = 1'b1;
-  @(posedge vif.clk);
-  vif.ibi_plan_valid = 1'b0;
-
-  wait (vif.scl_in && vif.sda_in);
-  vif.slave_drive_low <= 1'b1;
-
-  for (int bit_idx = 7; bit_idx >= 0; bit_idx--) begin
-    @(negedge vif.scl_in);
-    @(posedge vif.clk);
-    vif.slave_drive_low <= !ibi_addr_byte[bit_idx];
-    @(posedge vif.scl_in);
-  end
-
-  @(negedge vif.scl_in);
-  @(posedge vif.clk);
-  vif.slave_drive_low <= 1'b0;
-  @(posedge vif.scl_in);
-
-  if (has_mdb) begin
-    for (int bit_idx = 7; bit_idx >= 0; bit_idx--) begin
-      @(negedge vif.scl_in);
-      @(posedge vif.clk);
-      vif.slave_drive_low <= !mdb[bit_idx];
-      @(posedge vif.scl_in);
-    end
-
-    @(negedge vif.scl_in);
-    @(posedge vif.clk);
-    // MDB is the target's final byte, therefore the target drives T=0.  The
-    // controller also pulls this wired-AND bit low because it accepts at most
-    // one MDB; both drive contributors are checked independently.
-    vif.slave_drive_low <= 1'b1;
-    @(posedge vif.scl_in);
-  end
-
-  vif.slave_drive_low <= 1'b0;
-  wait (vif.irq);
-  wait (vif.scl_in && vif.sda_in);
-  repeat (4) @(posedge vif.clk);
-endtask

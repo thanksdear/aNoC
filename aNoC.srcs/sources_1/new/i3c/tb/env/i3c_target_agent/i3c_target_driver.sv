@@ -75,6 +75,20 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
   uvm_analysis_port #(i3c_target_intent) intent_ap;
   uvm_analysis_port #(i3c_ibi_intent) ibi_intent_ap;
 
+  // Runtime protocol policy belongs to the active target component.  Keeping
+  // it here prevents controller sequences from driving target behavior through
+  // shared interface variables.
+  logic       ack_addr;
+  logic       read_enable;
+  logic       i2c_read_mode;
+  logic       i3c_write_tbit_mode;
+  int         write_ack_count;
+  logic       ccc_ack_enable;
+  logic       ccc_direct_enable;
+  logic       entdaa_participate;
+  logic       expect_ccc_target;
+  logic [7:0] read_data[$];
+
   function new(string name, uvm_component parent);
     super.new(name, parent);
   endfunction
@@ -100,43 +114,42 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
     intent.expected_addr = expected_addr;
     intent.direction = direction;
     intent.expect_ack = expect_ack;
-    intent.write_ack_count = direction ? 0 :
-                             vif.slave_i2c_write_ack_count;
-    intent.read_length = direction ? vif.slave_read_length : 0;
+    intent.write_ack_count = direction ? 0 : write_ack_count;
+    intent.read_length = direction ? read_data.size() : 0;
     intent.entdaa_participate = 1'b0;
     intent.entdaa_id = '0;
     intent.entdaa_expected_da = '0;
     intent.entdaa_expect_da_ack = 1'b0;
 
     if (direction && expect_ack) begin
-      if (intent.read_length == 0 || intent.read_length > 4)
+      if (intent.read_length == 0 ||
+          intent.read_length > cfg.max_read_bytes)
         `uvm_error(
           "TGT_READ_PLAN",
           $sformatf(
-            "read_length must be in 1..4 for this target model, got %0d",
-            intent.read_length
+            "read_length must be in 1..%0d for this target model, got %0d",
+            cfg.max_read_bytes, intent.read_length
           )
         )
-      for (int i = 0; i < intent.read_length && i < 4; i++)
-        intent.read_data.push_back(vif.slave_read_data[i]);
+      foreach (read_data[i])
+        intent.read_data.push_back(read_data[i]);
     end
     intent_ap.write(intent);
   endtask
 
-  task publish_ibi_intent();
+  task publish_ibi_intent(i3c_target_txn req);
     i3c_ibi_intent intent;
 
     intent = i3c_ibi_intent::type_id::create("ibi_intent");
-    intent.expected_addr = vif.ibi_plan_addr;
-    intent.expect_addr_ack = vif.ibi_plan_expect_addr_ack;
-    intent.has_mdb = vif.ibi_plan_has_mdb;
-    intent.mdb = vif.ibi_plan_mdb;
+    intent.expected_addr = req.ibi_addr;
+    intent.expect_addr_ack = req.ibi_expect_addr_ack;
+    intent.has_mdb = req.ibi_has_mdb;
+    intent.mdb = req.ibi_mdb;
     // For the one-MDB model the MDB is also the target's final byte, so the
     // target owns End-of-Data and drives T low.  The controller may pull the
     // same OD bit low because this RTL intentionally accepts at most one MDB.
-    intent.expect_target_t_low = vif.ibi_plan_has_mdb;
-    intent.expect_controller_t_low =
-      vif.ibi_plan_expect_controller_t_low;
+    intent.expect_target_t_low = req.ibi_has_mdb;
+    intent.expect_controller_t_low = req.ibi_has_mdb;
     ibi_intent_ap.write(intent);
   endtask
 
@@ -167,7 +180,7 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
       // A hard reset can arrive while handle_frame() is blocked waiting for an
       // SCL edge.  Run frame handling in a reset epoch so reset immediately
       // aborts the in-flight target task and releases the bus.
-      init_slave();
+      init_target();
       wait (vif.rst_n === 1'b1);
       target_epoch = vif.tb_reset_epoch;
       fork : target_reset_epoch
@@ -178,15 +191,8 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
         begin
           forever begin
             @(negedge vif.sda_in);
-            if (vif.rst_n === 1'b1 && vif.scl_in && !vif.slave_drive_low)
+            if (vif.rst_n === 1'b1 && vif.scl_in && !vif.target_drive_low)
               handle_frame();
-          end
-        end
-        begin
-          forever begin
-            @(posedge vif.ibi_plan_valid);
-            if (vif.rst_n === 1'b1)
-              publish_ibi_intent();
           end
         end
       join_any
@@ -195,72 +201,64 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
   endtask
 
   task apply_config(i3c_target_txn req);
-    vif.slave_ack_addr <= req.ack_addr;
-    vif.slave_read_en <= req.read_enable;
-    vif.slave_read_length <= req.read_data.size();
-    vif.slave_i2c_read_mode <= req.i2c_read_mode;
-    vif.slave_i3c_write_tbit_mode <= req.i3c_write_tbit_mode;
-    vif.slave_i2c_write_ack_count <= req.i2c_write_ack_count;
-    vif.ccc_ack_en <= req.ccc_ack_enable;
-    vif.ccc_direct_en <= req.ccc_direct_enable;
-    vif.entdaa_slave_en <= req.entdaa_participate;
+    ack_addr = req.ack_addr;
+    read_enable = req.read_enable;
+    i2c_read_mode = req.i2c_read_mode;
+    i3c_write_tbit_mode = req.i3c_write_tbit_mode;
+    write_ack_count = req.i2c_write_ack_count;
+    ccc_ack_enable = req.ccc_ack_enable;
+    ccc_direct_enable = req.ccc_direct_enable;
+    entdaa_participate = req.entdaa_participate;
 
     if (req.read_data.size() > cfg.max_read_bytes)
       `uvm_error(
         "TGT_CFG",
         $sformatf(
-          "legacy electrical target path supports at most 4 read bytes, got %0d",
-          req.read_data.size()
+          "target supports at most %0d read bytes, got %0d",
+          cfg.max_read_bytes, req.read_data.size()
         )
       )
-    foreach (vif.slave_read_data[i])
-      vif.slave_read_data[i] <=
-        (i < req.read_data.size()) ? req.read_data[i] : 8'h00;
+    read_data.delete();
+    foreach (req.read_data[i])
+      read_data.push_back(req.read_data[i]);
   endtask
 
   task drive_ibi(i3c_target_txn req);
     logic [7:0] ibi_addr_byte;
 
     ibi_addr_byte = {req.ibi_addr, 1'b1};
-    vif.ibi_plan_addr = req.ibi_addr;
-    vif.ibi_plan_expect_addr_ack = req.ibi_expect_addr_ack;
-    vif.ibi_plan_has_mdb = req.ibi_has_mdb;
-    vif.ibi_plan_mdb = req.ibi_mdb;
-    vif.ibi_plan_expect_controller_t_low = req.ibi_has_mdb;
-    vif.ibi_plan_valid = 1'b1;
-    @(posedge vif.clk);
-    vif.ibi_plan_valid = 1'b0;
+    publish_ibi_intent(req);
 
     wait (vif.scl_in && vif.sda_in);
-    vif.slave_drive_low <= 1'b1;
+    vif.target_drive_low <= 1'b1;
 
     for (int bit_idx = 7; bit_idx >= 0; bit_idx--) begin
       @(negedge vif.scl_in);
       @(posedge vif.clk);
-      vif.slave_drive_low <= !ibi_addr_byte[bit_idx];
+      vif.target_drive_low <= !ibi_addr_byte[bit_idx];
       @(posedge vif.scl_in);
     end
 
     @(negedge vif.scl_in);
     @(posedge vif.clk);
-    vif.slave_drive_low <= 1'b0;
+    vif.target_drive_low <= 1'b0;
     @(posedge vif.scl_in);
 
     if (req.ibi_has_mdb && req.ibi_expect_addr_ack) begin
       for (int bit_idx = 7; bit_idx >= 0; bit_idx--) begin
         @(negedge vif.scl_in);
         @(posedge vif.clk);
-        vif.slave_drive_low <= !req.ibi_mdb[bit_idx];
+        vif.target_drive_low <= !req.ibi_mdb[bit_idx];
         @(posedge vif.scl_in);
       end
 
       @(negedge vif.scl_in);
       @(posedge vif.clk);
-      vif.slave_drive_low <= 1'b1;
+      vif.target_drive_low <= 1'b1;
       @(posedge vif.scl_in);
     end
 
-    vif.slave_drive_low <= 1'b0;
+    vif.target_drive_low <= 1'b0;
     wait (vif.scl_in && vif.sda_in);
     repeat (4) @(posedge vif.clk);
   endtask
@@ -286,26 +284,24 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
     join
   endtask
 
-  task init_slave();
-    vif.slave_drive_low <= 1'b0;
-    vif.slave_ack_addr <= 1'b0;
-    vif.slave_read_en <= 1'b0;
-    vif.slave_read_length <= 0;
-    vif.slave_i2c_read_mode <= 1'b0;
-    vif.slave_i3c_write_tbit_mode <= 1'b0;
-    vif.slave_i2c_write_ack_count <= 0;
-    vif.ccc_ack_en <= 1'b0;
-    vif.ccc_direct_en <= 1'b0;
-    vif.entdaa_slave_en <= 1'b0;
-    vif.expect_ccc_target <= 1'b0;
-    foreach (vif.slave_read_data[i])
-      vif.slave_read_data[i] <= 8'h00;
-    vif.slave_dbg_addr_byte <= 8'h00;
-    vif.slave_dbg_ccc_byte <= 8'h00;
-    vif.slave_dbg_write_byte <= 8'h00;
-    vif.slave_dbg_entdaa_da <= 8'h00;
-    vif.slave_dbg_matched <= 1'b0;
-    vif.slave_dbg_ack_phase <= 1'b0;
+  task init_target();
+    vif.target_drive_low <= 1'b0;
+    ack_addr = 1'b0;
+    read_enable = 1'b0;
+    i2c_read_mode = 1'b0;
+    i3c_write_tbit_mode = 1'b0;
+    write_ack_count = 0;
+    ccc_ack_enable = 1'b0;
+    ccc_direct_enable = 1'b0;
+    entdaa_participate = 1'b0;
+    expect_ccc_target = 1'b0;
+    read_data.delete();
+    vif.target_dbg_addr_byte <= 8'h00;
+    vif.target_dbg_ccc_byte <= 8'h00;
+    vif.target_dbg_write_byte <= 8'h00;
+    vif.target_dbg_entdaa_da <= 8'h00;
+    vif.target_dbg_matched <= 1'b0;
+    vif.target_dbg_ack_phase <= 1'b0;
   endtask
 
   task wait_entdaa_start();
@@ -331,7 +327,7 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
     logic       participate;
     logic       da_valid;
 
-    participate = vif.entdaa_slave_en;
+    participate = entdaa_participate;
     assigned = 1'b0;
     publish_entdaa_intent(participate);
 
@@ -356,34 +352,34 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
       // condition when no unaddressed target remains.
       if (!participate || assigned || header_byte !== 8'hfd) begin
         @(negedge vif.scl_in);
-        vif.slave_dbg_ack_phase <= 1'b1;
-        vif.slave_drive_low <= 1'b0;
+        vif.target_dbg_ack_phase <= 1'b1;
+        vif.target_drive_low <= 1'b0;
         @(posedge vif.scl_in);
-        vif.slave_dbg_ack_phase <= 1'b0;
+        vif.target_dbg_ack_phase <= 1'b0;
         wait_entdaa_stop();
         return;
       end
 
       @(negedge vif.scl_in);
-      vif.slave_dbg_ack_phase <= 1'b1;
-      vif.slave_drive_low <= 1'b1; // ACK the first 7E/R header.
+      vif.target_dbg_ack_phase <= 1'b1;
+      vif.target_drive_low <= 1'b1; // ACK the first 7E/R header.
       @(posedge vif.scl_in);
       @(negedge vif.scl_in);
-      vif.slave_drive_low <= 1'b0;
-      vif.slave_dbg_ack_phase <= 1'b0;
+      vif.target_drive_low <= 1'b0;
+      vif.target_dbg_ack_phase <= 1'b0;
 
       for (int bit_idx = 63; bit_idx >= 0; bit_idx--) begin
-        vif.slave_drive_low <= !cfg.entdaa_id[bit_idx];
+        vif.target_drive_low <= !cfg.entdaa_id[bit_idx];
         @(posedge vif.scl_in);
         @(negedge vif.scl_in);
       end
-      vif.slave_drive_low <= 1'b0;
+      vif.target_drive_low <= 1'b0;
 
       for (int bit_idx = 7; bit_idx >= 0; bit_idx--) begin
         @(posedge vif.scl_in);
         da_byte[bit_idx] = vif.sda_in;
       end
-      vif.slave_dbg_entdaa_da <= da_byte;
+      vif.target_dbg_entdaa_da <= da_byte;
 
       da_valid = ((^da_byte) === 1'b1) &&
                  (da_byte[7:1] === cfg.entdaa_expected_da);
@@ -397,12 +393,12 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
         )
 
       @(negedge vif.scl_in);
-      vif.slave_dbg_ack_phase <= 1'b1;
-      vif.slave_drive_low <= da_valid; // ACK only a valid expected DA.
+      vif.target_dbg_ack_phase <= 1'b1;
+      vif.target_drive_low <= da_valid; // ACK only a valid expected DA.
       @(posedge vif.scl_in);
       @(negedge vif.scl_in);
-      vif.slave_drive_low <= 1'b0;
-      vif.slave_dbg_ack_phase <= 1'b0;
+      vif.target_drive_low <= 1'b0;
+      vif.target_dbg_ack_phase <= 1'b0;
 
       if (!da_valid) begin
         wait_entdaa_stop();
@@ -422,46 +418,45 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
     logic       target_more;
     int         byte_idx;
     int unsigned read_length;
-    int         write_ack_count;
 
-    vif.slave_drive_low <= 1'b0;
-    vif.slave_dbg_matched <= 1'b0;
-    vif.slave_dbg_ack_phase <= 1'b0;
+    vif.target_drive_low <= 1'b0;
+    vif.target_dbg_matched <= 1'b0;
+    vif.target_dbg_ack_phase <= 1'b0;
 
     for (int bit_idx = 7; bit_idx >= 0; bit_idx--) begin
       @(posedge vif.scl_in);
       addr_byte[bit_idx] = vif.sda_in;
     end
-    vif.slave_dbg_addr_byte <= addr_byte;
+    vif.target_dbg_addr_byte <= addr_byte;
 
-    if (vif.expect_ccc_target) begin
-      vif.expect_ccc_target <= 1'b0;
-      matched = vif.slave_ack_addr &&
+    if (expect_ccc_target) begin
+      expect_ccc_target = 1'b0;
+      matched = ack_addr &&
                 (addr_byte[7:1] == cfg.static_addr);
-      vif.slave_dbg_matched <= matched;
+      vif.target_dbg_matched <= matched;
       publish_intent(TARGET_INTENT_CCC_DIRECT, cfg.static_addr,
-                     vif.slave_read_en, vif.slave_ack_addr);
+                     read_enable, ack_addr);
       @(negedge vif.scl_in);
-      vif.slave_dbg_ack_phase <= 1'b1;
+      vif.target_dbg_ack_phase <= 1'b1;
       if (matched)
-        vif.slave_drive_low <= 1'b1;
+        vif.target_drive_low <= 1'b1;
       @(posedge vif.scl_in);
       @(negedge vif.scl_in);
-      vif.slave_drive_low <= 1'b0;
-      vif.slave_dbg_ack_phase <= 1'b0;
+      vif.target_drive_low <= 1'b0;
+      vif.target_dbg_ack_phase <= 1'b0;
     end else if (addr_byte == 8'hfc) begin
-      matched = vif.ccc_ack_en;
-      vif.slave_dbg_matched <= matched;
+      matched = ccc_ack_enable;
+      vif.target_dbg_matched <= matched;
       publish_intent(TARGET_INTENT_CCC_BCAST, 7'h7e,
-                     1'b0, vif.ccc_ack_en);
+                     1'b0, ccc_ack_enable);
       @(negedge vif.scl_in);
-      vif.slave_dbg_ack_phase <= 1'b1;
+      vif.target_dbg_ack_phase <= 1'b1;
       if (matched)
-        vif.slave_drive_low <= 1'b1;
+        vif.target_drive_low <= 1'b1;
       @(posedge vif.scl_in);
       @(negedge vif.scl_in);
-      vif.slave_drive_low <= 1'b0;
-      vif.slave_dbg_ack_phase <= 1'b0;
+      vif.target_drive_low <= 1'b0;
+      vif.target_dbg_ack_phase <= 1'b0;
 
       if (!matched)
         return;
@@ -470,18 +465,18 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
         @(posedge vif.scl_in);
         ccc_byte[bit_idx] = vif.sda_in;
       end
-      vif.slave_dbg_ccc_byte <= ccc_byte;
+      vif.target_dbg_ccc_byte <= ccc_byte;
 
       // CCC Code is an I3C write byte.  Its ninth bit is odd parity (T),
       // driven by the controller; it is not an ACK driven by the target.
       @(negedge vif.scl_in);
-      vif.slave_drive_low <= 1'b0;
+      vif.target_drive_low <= 1'b0;
       @(posedge vif.scl_in);
 
-      if (vif.ccc_direct_en) begin
+      if (ccc_direct_enable) begin
         // Return before the controller creates Sr so run_phase can recognize
         // the following target-address START and ACK that address normally.
-        vif.expect_ccc_target <= 1'b1;
+        expect_ccc_target = 1'b1;
         return;
       end else begin
         @(negedge vif.scl_in);
@@ -490,59 +485,58 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
         return;
       end
     end else begin
-      matched = vif.slave_ack_addr &&
+      matched = ack_addr &&
                 (addr_byte[7:1] == cfg.static_addr);
-      vif.slave_dbg_matched <= matched;
+      vif.target_dbg_matched <= matched;
       publish_intent(TARGET_INTENT_PRIVATE, cfg.static_addr,
-                     vif.slave_read_en, vif.slave_ack_addr);
+                     read_enable, ack_addr);
       @(negedge vif.scl_in);
-      vif.slave_dbg_ack_phase <= 1'b1;
+      vif.target_dbg_ack_phase <= 1'b1;
       if (matched)
-        vif.slave_drive_low <= 1'b1;
+        vif.target_drive_low <= 1'b1;
       @(posedge vif.scl_in);
       @(negedge vif.scl_in);
-      vif.slave_drive_low <= 1'b0;
-      vif.slave_dbg_ack_phase <= 1'b0;
+      vif.target_drive_low <= 1'b0;
+      vif.target_dbg_ack_phase <= 1'b0;
     end
 
-    if (matched && !addr_byte[0] && vif.slave_i2c_write_ack_count > 0) begin
-      write_ack_count = vif.slave_i2c_write_ack_count;
+    if (matched && !addr_byte[0] && write_ack_count > 0) begin
       for (byte_idx = 0; byte_idx < write_ack_count; byte_idx++) begin
         for (int bit_idx = 7; bit_idx >= 0; bit_idx--) begin
           @(posedge vif.scl_in);
           read_byte[bit_idx] = vif.sda_in;
         end
-        vif.slave_dbg_write_byte <= read_byte;
+        vif.target_dbg_write_byte <= read_byte;
 
         @(negedge vif.scl_in);
-        if (vif.slave_i3c_write_tbit_mode) begin
+        if (i3c_write_tbit_mode) begin
           // I3C write byte ninth bit is controller-driven odd parity (T).
           // The target only observes it and must not mask a bad controller T.
-          vif.slave_dbg_ack_phase <= 1'b0;
-          vif.slave_drive_low <= 1'b0;
+          vif.target_dbg_ack_phase <= 1'b0;
+          vif.target_drive_low <= 1'b0;
         end else begin
           // Legacy I2C write byte ninth bit is target-driven ACK.
-          vif.slave_dbg_ack_phase <= 1'b1;
-          vif.slave_drive_low <= 1'b1;
+          vif.target_dbg_ack_phase <= 1'b1;
+          vif.target_drive_low <= 1'b1;
         end
         @(posedge vif.scl_in);
         @(negedge vif.scl_in);
-        vif.slave_drive_low <= 1'b0;
-        vif.slave_dbg_ack_phase <= 1'b0;
+        vif.target_drive_low <= 1'b0;
+        vif.target_dbg_ack_phase <= 1'b0;
       end
       return;
     end
 
-    if (!matched || !addr_byte[0] || !vif.slave_read_en)
+    if (!matched || !addr_byte[0] || !read_enable)
       return;
 
-    read_length = vif.slave_read_length;
-    if (read_length == 0 || read_length > 4) begin
+    read_length = read_data.size();
+    if (read_length == 0 || read_length > cfg.max_read_bytes) begin
       `uvm_error(
         "TGT_READ_PLAN",
         $sformatf(
-          "cannot drive read with read_length=%0d; supported range is 1..4",
-          read_length
+          "cannot drive read with read_length=%0d; supported range is 1..%0d",
+          read_length, cfg.max_read_bytes
         )
       )
       return;
@@ -550,9 +544,9 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
 
     byte_idx = 0;
     forever begin
-      read_byte = vif.slave_read_data[byte_idx];
+      read_byte = read_data[byte_idx];
       for (int bit_idx = 7; bit_idx >= 0; bit_idx--) begin
-        vif.slave_drive_low <= !read_byte[bit_idx];
+        vif.target_drive_low <= !read_byte[bit_idx];
         @(posedge vif.scl_in);
         @(negedge vif.scl_in);
       end
@@ -562,11 +556,11 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
       // SDA is OD, the controller can still pull a target T=1 low to terminate
       // before the target's planned end.  I2C keeps the target released while
       // the controller drives ACK/NACK.
-      vif.slave_drive_low <= vif.slave_i2c_read_mode ? 1'b0 : !target_more;
+      vif.target_drive_low <= i2c_read_mode ? 1'b0 : !target_more;
       @(posedge vif.scl_in);
-      cont = vif.slave_i2c_read_mode ? !vif.sda_in : vif.sda_in;
+      cont = i2c_read_mode ? !vif.sda_in : vif.sda_in;
       @(negedge vif.scl_in);
-      vif.slave_drive_low <= 1'b0;
+      vif.target_drive_low <= 1'b0;
 
       byte_idx++;
       if (!cont)

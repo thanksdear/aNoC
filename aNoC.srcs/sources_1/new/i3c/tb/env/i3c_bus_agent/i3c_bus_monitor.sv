@@ -140,7 +140,7 @@ class i3c_bus_monitor extends uvm_monitor;
     // 内容猜测来源。两侧同时拉低或信号不确定时返回 UNKNOWN，避免误判。
     controller_drove_low = (vif.sda_oe === 1'b1) &&
                            (vif.sda_out === 1'b0);
-    target_drove_low     = (vif.slave_drive_low === 1'b1);
+    target_drove_low     = (vif.target_drive_low === 1'b1);
 
     if (controller_drove_low && !target_drove_low)
       return I3C_ORIGIN_CONTROLLER;
@@ -433,7 +433,7 @@ class i3c_bus_monitor extends uvm_monitor;
             else if (collecting_header) begin
               // 每个 segment 的前 8 位固定是 {7-bit address, RnW}，第九位
               // 是地址 ACK/NACK。这里只保存原始值，不在 monitor 中使用
-              // slave_ack_addr 等激励变量生成“期望 ACK”。
+              // target agent 的配置变量生成“期望 ACK”。
               if (sampled_bit_count < 8) begin
                 segment.header[7-sampled_bit_count] = vif.sda_in;
                 sampled_bit_count++;
@@ -471,7 +471,7 @@ class i3c_bus_monitor extends uvm_monitor;
                   (vif.sda_oe === 1'b1) && (vif.sda_out === 1'b0)
                 );
                 segment.data_ninth_target_low.push_back(
-                  vif.slave_drive_low === 1'b1
+                  vif.target_drive_low === 1'b1
                 );
                 if (has_entdaa_prefix(tr, segment)) begin
                   // CCC code 0x07 本身仍是普通 I3C write byte，它的第九位

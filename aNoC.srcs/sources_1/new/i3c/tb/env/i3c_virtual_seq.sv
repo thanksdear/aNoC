@@ -367,3 +367,211 @@ class i3c_direct_ccc_write_vseq extends i3c_virtual_seq;
     idle_target();
   endtask
 endclass
+
+class i3c_entdaa_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_entdaa_vseq)
+
+  function new(string name = "i3c_entdaa_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_target_txn cfg_req;
+    i3c_entdaa_seq controller_seq;
+
+    cfg_req = i3c_target_txn::type_id::create("cfg_req");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ccc_ack_enable = 1'b1;
+    cfg_req.entdaa_participate = 1'b1;
+    configure_target(cfg_req);
+
+    controller_seq = i3c_entdaa_seq::type_id::create("controller_seq");
+    controller_seq.start(p_sequencer.apb_sqr);
+    idle_target();
+  endtask
+endclass
+
+class i3c_ibi_no_payload_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_ibi_no_payload_vseq)
+
+  function new(string name = "i3c_ibi_no_payload_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_ibi_no_payload_seq controller_seq;
+    i3c_target_ibi_seq     target_seq;
+
+    controller_seq =
+      i3c_ibi_no_payload_seq::type_id::create("controller_seq");
+    target_seq = i3c_target_ibi_seq::type_id::create("target_seq");
+    target_seq.addr = 7'h12;
+    target_seq.has_mdb = 1'b0;
+    target_seq.expect_addr_ack = 1'b1;
+
+    fork
+      controller_seq.start(p_sequencer.apb_sqr);
+      begin
+        controller_seq.target_ready.wait_on();
+        target_seq.start(p_sequencer.target_sqr);
+      end
+    join
+  endtask
+endclass
+
+class i3c_ibi_payload_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_ibi_payload_vseq)
+
+  function new(string name = "i3c_ibi_payload_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_ibi_payload_seq controller_seq;
+    i3c_target_ibi_seq  target_seq;
+
+    controller_seq =
+      i3c_ibi_payload_seq::type_id::create("controller_seq");
+    target_seq = i3c_target_ibi_seq::type_id::create("target_seq");
+    target_seq.addr = 7'h12;
+    target_seq.has_mdb = 1'b1;
+    target_seq.mdb = 8'h5a;
+    target_seq.expect_addr_ack = 1'b1;
+
+    fork
+      controller_seq.start(p_sequencer.apb_sqr);
+      begin
+        controller_seq.target_ready.wait_on();
+        target_seq.start(p_sequencer.target_sqr);
+      end
+    join
+  endtask
+endclass
+
+class i3c_bus_timing_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_bus_timing_vseq)
+
+  function new(string name = "i3c_bus_timing_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_target_txn      cfg_req;
+    i3c_bus_timing_seq controller_seq;
+
+    cfg_req = i3c_target_txn::type_id::create("cfg_req");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ack_addr = 1'b1;
+    cfg_req.i2c_write_ack_count = 1;
+    cfg_req.i3c_write_tbit_mode = 1'b1;
+    configure_target(cfg_req);
+
+    controller_seq = i3c_bus_timing_seq::type_id::create("controller_seq");
+    controller_seq.start(p_sequencer.apb_sqr);
+    idle_target();
+  endtask
+endclass
+
+class i3c_bus_timing_sweep_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_bus_timing_sweep_vseq)
+
+  function new(string name = "i3c_bus_timing_sweep_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_target_txn            cfg_req;
+    i3c_bus_timing_sweep_seq controller_seq;
+
+    cfg_req = i3c_target_txn::type_id::create("cfg_req");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ack_addr = 1'b1;
+    configure_target(cfg_req);
+
+    controller_seq =
+      i3c_bus_timing_sweep_seq::type_id::create("controller_seq");
+    controller_seq.start(p_sequencer.apb_sqr);
+    idle_target();
+  endtask
+endclass
+
+class i3c_irq_access_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_irq_access_vseq)
+
+  function new(string name = "i3c_irq_access_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_target_txn     cfg_req;
+    i3c_irq_access_seq controller_seq;
+
+    cfg_req = i3c_target_txn::type_id::create("cfg_req");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ack_addr = 1'b1;
+    configure_target(cfg_req);
+
+    controller_seq = i3c_irq_access_seq::type_id::create("controller_seq");
+    controller_seq.start(p_sequencer.apb_sqr);
+    idle_target();
+  endtask
+endclass
+
+class i3c_polling_access_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_polling_access_vseq)
+
+  function new(string name = "i3c_polling_access_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_target_txn         cfg_req;
+    i3c_polling_access_seq controller_seq;
+
+    cfg_req = i3c_target_txn::type_id::create("cfg_req");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ack_addr = 1'b1;
+    cfg_req.i2c_write_ack_count = 3;
+    cfg_req.i3c_write_tbit_mode = 1'b1;
+    configure_target(cfg_req);
+
+    controller_seq =
+      i3c_polling_access_seq::type_id::create("controller_seq");
+    controller_seq.start(p_sequencer.apb_sqr);
+    idle_target();
+  endtask
+endclass
+
+class i3c_sw_reset_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_sw_reset_vseq)
+
+  function new(string name = "i3c_sw_reset_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_target_txn cfg_req;
+    i3c_sw_reset_seq controller_seq;
+
+    cfg_req = i3c_target_txn::type_id::create("cfg_req");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ack_addr = 1'b1;
+    configure_target(cfg_req);
+
+    controller_seq = i3c_sw_reset_seq::type_id::create("controller_seq");
+    fork
+      controller_seq.start(p_sequencer.apb_sqr);
+      begin
+        i3c_target_txn post_reset_cfg;
+        controller_seq.post_reset_target_ready.wait_on();
+        post_reset_cfg =
+          i3c_target_txn::type_id::create("post_reset_cfg");
+        post_reset_cfg.op = I3C_TARGET_CONFIG;
+        post_reset_cfg.ack_addr = 1'b1;
+        configure_target(post_reset_cfg);
+        controller_seq.post_reset_target_configured.trigger();
+      end
+    join
+    idle_target();
+  endtask
+endclass

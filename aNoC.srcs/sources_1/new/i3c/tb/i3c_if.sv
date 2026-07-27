@@ -14,35 +14,18 @@ interface i3c_if (input logic clk);
     logic        sda_in;logic sda_oe;logic sda_out;
     logic        irq;
 
-    logic        slave_drive_low;
-    logic        slave_ack_addr;
-    logic        slave_read_en;
-    int unsigned slave_read_length;
-    logic        slave_i2c_read_mode;
-    logic        slave_i3c_write_tbit_mode;
-    int          slave_i2c_write_ack_count;
-    logic        ccc_ack_en;
-    logic        ccc_direct_en;
-    logic        entdaa_slave_en;
-    logic        expect_ccc_target;
+    // Target model's only electrical contribution to the shared SDA line.
+    // Protocol configuration stays inside i3c_target_driver.
+    logic        target_drive_low;
 
-    // Independent target-side IBI plan.  The active IBI stimulus publishes
-    // these fields before it changes SDA; the protocol scoreboard consumes a
-    // separate intent object built from this plan, never the sampled bus data.
-    logic        ibi_plan_valid = 1'b0;
-    logic [6:0]  ibi_plan_addr = '0;
-    logic        ibi_plan_expect_addr_ack = 1'b0;
-    logic        ibi_plan_has_mdb = 1'b0;
-    logic [7:0]  ibi_plan_mdb = '0;
-    logic        ibi_plan_expect_controller_t_low = 1'b0;
-
-    logic [7:0]  slave_read_data [0:3];
-    logic [7:0]  slave_dbg_addr_byte;
-    logic [7:0]  slave_dbg_ccc_byte;
-    logic [7:0]  slave_dbg_write_byte;
-    logic [7:0]  slave_dbg_entdaa_da;
-    logic        slave_dbg_matched;
-    logic        slave_dbg_ack_phase;
+    // Read-only target observations used by directed synchronization and
+    // diagnostics.  These are observations, not target stimulus controls.
+    logic [7:0]  target_dbg_addr_byte;
+    logic [7:0]  target_dbg_ccc_byte;
+    logic [7:0]  target_dbg_write_byte;
+    logic [7:0]  target_dbg_entdaa_da;
+    logic        target_dbg_matched;
+    logic        target_dbg_ack_phase;
 
   // 驱动视角:我驱动的是 output, 我观察的是 input
   clocking drv_cb @(posedge clk);

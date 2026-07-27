@@ -12,13 +12,13 @@ module top;
   i3c_if vif (clk);
 
   assign vif.scl_in = vif.scl_oe ? vif.scl_out : 1'b1;
-  assign vif.sda_in = (vif.slave_drive_low || (vif.sda_oe && !vif.sda_out)) ? 1'b0 : 1'b1;
+  assign vif.sda_in = (vif.target_drive_low || (vif.sda_oe && !vif.sda_out)) ? 1'b0 : 1'b1;
 
   // The simple wired-low resolver would otherwise hide an illegal fight where
   // the controller drives push-pull high while the target pulls SDA low.
   always @(posedge clk) begin
     if (vif.rst_n === 1'b1 && vif.sda_oe === 1'b1 &&
-        vif.sda_out === 1'b1 && vif.slave_drive_low === 1'b1)
+        vif.sda_out === 1'b1 && vif.target_drive_low === 1'b1)
       `uvm_error("I3C_CONTENTION", "controller drove SDA high while target drove it low")
   end
 
