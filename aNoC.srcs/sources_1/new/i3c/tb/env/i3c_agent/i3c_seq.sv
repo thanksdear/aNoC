@@ -266,10 +266,8 @@ class i3c_sdr_private_write_seq extends i3c_seq;
     send_apb(WR, TX_PORT, 32'h0000_00a5);
     send_apb(WR, TX_PORT, 32'h0000_005a);
     send_apb(WR, TX_PORT, 32'h0000_00c3);
-    vif.slave_ack_addr <= 1'b1;
     send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd3));
     wait_status_idle();
-    vif.slave_ack_addr <= 1'b0;
     apb_read(RESP_PORT, rdata);
     expect_eq("SDR private write response", rdata, 32'h0, 32'h3);
     apb_read(REG_ERR_STATUS, rdata);
@@ -287,130 +285,10 @@ class i3c_sdr_private_write_len4_seq extends i3c_seq;
     send_apb(WR, TX_PORT, 32'h0000_0020);
     send_apb(WR, TX_PORT, 32'h0000_0030);
     send_apb(WR, TX_PORT, 32'h0000_0040);
-    vif.slave_ack_addr <= 1'b1;
     send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd4));
     wait_status_idle();
-    vif.slave_ack_addr <= 1'b0;
     apb_read(RESP_PORT, rdata);
     expect_eq("SDR private write len4 response", rdata, 32'h0, 32'h3);
-  endtask
-endclass
-
-class i3c_cmd_before_tx_seq extends i3c_seq;
-  `uvm_object_utils(i3c_cmd_before_tx_seq)
-  function new(string name = "i3c_cmd_before_tx_seq"); super.new(name); endfunction
-
-  task body();
-    bit [31:0] rdata;
-
-    cfg_i3c_mode();
-    vif.slave_ack_addr <= 1'b1;
-    vif.slave_i2c_write_ack_count <= 2;
-    vif.slave_i3c_write_tbit_mode <= 1'b1;
-
-    // The RTL is allowed to accept a descriptor before its payload.  It must
-    // finish the address and then remain busy in S_DATA_WR until TX arrives.
-    send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd2));
-    wait (vif.slave_dbg_ack_phase === 1'b1);
-
-    // 地址 ACK 必须等到下一次 SCL 下降沿才能安全释放；否则 SDA 在 SCL 高时
-    // 上升会被误认为 STOP。此时 TX FIFO 还是空的，RTL 停在 S_DATA_WR，尚不
-    // 会产生下一次 SCL 下降沿，因此不能在写首个 TX byte 前等待 ACK phase 清零。
-    repeat (4) @(posedge vif.clk);
-    apb_read(REG_STATUS, rdata);
-    expect_eq("CMD-before-TX waits after address", rdata,
-              32'h0000_0001, 32'h0000_0001);
-
-    send_apb(WR, TX_PORT, 32'h0000_00d1);
-    // 首个 TX byte 到达后 RTL 才会继续拉低 SCL；target 随即释放地址 ACK。
-    wait (vif.slave_dbg_ack_phase === 1'b0);
-    wait (vif.slave_dbg_write_byte === 8'hd1);
-    apb_read(REG_STATUS, rdata);
-    expect_eq("CMD-before-TX waits for byte1", rdata,
-              32'h0000_0001, 32'h0000_0001);
-
-    send_apb(WR, TX_PORT, 32'h0000_00e2);
-    wait_status_idle();
-    vif.slave_ack_addr <= 1'b0;
-    vif.slave_i2c_write_ack_count <= 0;
-    vif.slave_i3c_write_tbit_mode <= 1'b0;
-    apb_read(RESP_PORT, rdata);
-    expect_eq("CMD-before-TX response", rdata, 32'h0, 32'h3);
-  endtask
-endclass
-
-class i3c_private_nack_seq extends i3c_seq;
-  `uvm_object_utils(i3c_private_nack_seq)
-  function new(string name = "i3c_private_nack_seq"); super.new(name); endfunction
-  task body();
-    bit [31:0] rdata;
-    cfg_i3c_mode();
-    vif.slave_ack_addr <= 1'b0;
-    send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd0));
-    wait_status_idle();
-    wait_irq_asserted();
-    apb_read(RESP_PORT, rdata);
-    expect_eq("private NACK response", rdata, 32'h0000_0002, 32'h0000_0002);
-    apb_read(REG_ERR_STATUS, rdata);
-    expect_eq("private NACK ERR_STATUS set", rdata, 32'h0000_0002, 32'h0000_0002);
-    send_apb(WR, REG_ERR_STATUS, 32'h0000_0002);
-    apb_read(REG_ERR_STATUS, rdata);
-    expect_eq("private NACK ERR_STATUS clear", rdata, 32'h0000_0000, 32'h0000_0003);
-  endtask
-endclass
-
-class i3c_sdr_private_read_seq extends i3c_seq;
-  `uvm_object_utils(i3c_sdr_private_read_seq)
-  function new(string name = "i3c_sdr_private_read_seq"); super.new(name); endfunction
-  task body();
-    bit [31:0] rdata;
-    cfg_i3c_mode();
-    vif.slave_read_data[0] <= 8'h3c;
-    vif.slave_read_data[1] <= 8'ha7;
-    vif.slave_read_data[2] <= 8'hd2;
-    // Target has a third byte ready, but the controller command accepts only
-    // two.  The second T-bit therefore exercises controller early termination.
-    vif.slave_read_length <= 3;
-    vif.slave_ack_addr <= 1'b1;
-    vif.slave_read_en <= 1'b1;
-    send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b1, 8'd2));
-    wait_status_idle();
-    vif.slave_ack_addr <= 1'b0;
-    vif.slave_read_en <= 1'b0;
-    vif.slave_read_length <= 0;
-    apb_read(RESP_PORT, rdata);
-    expect_eq("SDR private read response", rdata, 32'h0, 32'h3);
-    apb_read(RX_PORT, rdata);
-    expect_eq("SDR RX byte0", rdata, 32'h3c, 32'hff);
-    apb_read(RX_PORT, rdata);
-    expect_eq("SDR RX byte1", rdata, 32'ha7, 32'hff);
-  endtask
-endclass
-
-class i3c_sdr_private_read_short_seq extends i3c_seq;
-  `uvm_object_utils(i3c_sdr_private_read_short_seq)
-  function new(string name = "i3c_sdr_private_read_short_seq");
-    super.new(name);
-  endfunction
-
-  task body();
-    bit [31:0] rdata;
-    cfg_i3c_mode();
-    vif.slave_read_data[0] <= 8'he1;
-    // Controller permits three bytes, while the target ends after the first
-    // valid byte by driving T=0.
-    vif.slave_read_length <= 1;
-    vif.slave_ack_addr <= 1'b1;
-    vif.slave_read_en <= 1'b1;
-    send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b1, 8'd3));
-    wait_status_idle();
-    vif.slave_ack_addr <= 1'b0;
-    vif.slave_read_en <= 1'b0;
-    vif.slave_read_length <= 0;
-    apb_read(RESP_PORT, rdata);
-    expect_eq("SDR short-read response", rdata, 32'h0, 32'h3);
-    apb_read(RX_PORT, rdata);
-    expect_eq("SDR short-read RX byte0", rdata, 32'he1, 32'hff);
   endtask
 endclass
 
@@ -439,32 +317,10 @@ class i3c_target_agent_private_read_seq extends i3c_seq;
   endtask
 endclass
 
-class i3c_target_agent_private_write_seq extends i3c_seq;
-  `uvm_object_utils(i3c_target_agent_private_write_seq)
+class i3c_private_nack_seq extends i3c_seq;
+  `uvm_object_utils(i3c_private_nack_seq)
 
-  function new(string name = "i3c_target_agent_private_write_seq");
-    super.new(name);
-  endfunction
-
-  task body();
-    bit [31:0] rdata;
-
-    cfg_i3c_mode();
-    send_apb(WR, TX_PORT, 32'h0000_005a);
-    send_apb(WR, TX_PORT, 32'h0000_00c3);
-    send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd2));
-    wait_status_idle();
-    apb_read(RESP_PORT, rdata);
-    expect_eq("target-agent private write response", rdata, 32'h0, 32'h3);
-    apb_read(REG_ERR_STATUS, rdata);
-    expect_eq("target-agent private write ERR_STATUS", rdata, 32'h0, 32'h3);
-  endtask
-endclass
-
-class i3c_target_agent_private_nack_seq extends i3c_seq;
-  `uvm_object_utils(i3c_target_agent_private_nack_seq)
-
-  function new(string name = "i3c_target_agent_private_nack_seq");
+  function new(string name = "i3c_private_nack_seq");
     super.new(name);
   endfunction
 
@@ -488,10 +344,10 @@ class i3c_target_agent_private_nack_seq extends i3c_seq;
   endtask
 endclass
 
-class i3c_target_agent_short_read_seq extends i3c_seq;
-  `uvm_object_utils(i3c_target_agent_short_read_seq)
+class i3c_sdr_private_read_short_seq extends i3c_seq;
+  `uvm_object_utils(i3c_sdr_private_read_short_seq)
 
-  function new(string name = "i3c_target_agent_short_read_seq");
+  function new(string name = "i3c_sdr_private_read_short_seq");
     super.new(name);
   endfunction
 
@@ -508,10 +364,10 @@ class i3c_target_agent_short_read_seq extends i3c_seq;
   endtask
 endclass
 
-class i3c_target_agent_early_end_read_seq extends i3c_seq;
-  `uvm_object_utils(i3c_target_agent_early_end_read_seq)
+class i3c_sdr_private_read_seq extends i3c_seq;
+  `uvm_object_utils(i3c_sdr_private_read_seq)
 
-  function new(string name = "i3c_target_agent_early_end_read_seq");
+  function new(string name = "i3c_sdr_private_read_seq");
     super.new(name);
   endfunction
 
@@ -530,10 +386,10 @@ class i3c_target_agent_early_end_read_seq extends i3c_seq;
   endtask
 endclass
 
-class i3c_target_agent_cmd_before_tx_seq extends i3c_seq;
-  `uvm_object_utils(i3c_target_agent_cmd_before_tx_seq)
+class i3c_cmd_before_tx_seq extends i3c_seq;
+  `uvm_object_utils(i3c_cmd_before_tx_seq)
 
-  function new(string name = "i3c_target_agent_cmd_before_tx_seq");
+  function new(string name = "i3c_cmd_before_tx_seq");
     super.new(name);
   endfunction
 
@@ -589,19 +445,20 @@ endclass
 
 class i3c_i2c_private_write_seq extends i3c_seq;
   `uvm_object_utils(i3c_i2c_private_write_seq)
-  function new(string name = "i3c_i2c_private_write_seq"); super.new(name); endfunction
+
+  function new(string name = "i3c_i2c_private_write_seq");
+    super.new(name);
+  endfunction
+
   task body();
     bit [31:0] rdata;
+
     cfg_i3c_mode();
     cfg_i2c_mode();
     send_apb(WR, TX_PORT, 32'h11);
     send_apb(WR, TX_PORT, 32'h22);
-    vif.slave_ack_addr <= 1'b1;
-    vif.slave_i2c_write_ack_count <= 2;
     send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd2));
     wait_status_idle();
-    vif.slave_ack_addr <= 1'b0;
-    vif.slave_i2c_write_ack_count <= 0;
     apb_read(RESP_PORT, rdata);
     expect_eq("I2C private write response", rdata, 32'h0, 32'h3);
   endtask
@@ -609,6 +466,7 @@ endclass
 
 class i3c_i2c_private_write_data_nack_seq extends i3c_seq;
   `uvm_object_utils(i3c_i2c_private_write_data_nack_seq)
+
   function new(string name = "i3c_i2c_private_write_data_nack_seq");
     super.new(name);
   endfunction
@@ -620,14 +478,8 @@ class i3c_i2c_private_write_data_nack_seq extends i3c_seq;
     cfg_i2c_mode();
     send_apb(WR, TX_PORT, 32'h33);
     send_apb(WR, TX_PORT, 32'h44);
-    vif.slave_ack_addr <= 1'b1;
-    // ACK byte[0], then leave byte[1]'s ninth bit released (NACK).
-    vif.slave_i2c_write_ack_count <= 1;
     send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd2));
     wait_status_idle();
-    vif.slave_ack_addr <= 1'b0;
-    vif.slave_i2c_write_ack_count <= 0;
-
     apb_read(RESP_PORT, rdata);
     expect_eq("I2C data NACK response", rdata,
               32'h0000_0002, 32'h0000_0003);
@@ -640,23 +492,18 @@ endclass
 
 class i3c_i2c_private_read_seq extends i3c_seq;
   `uvm_object_utils(i3c_i2c_private_read_seq)
-  function new(string name = "i3c_i2c_private_read_seq"); super.new(name); endfunction
+
+  function new(string name = "i3c_i2c_private_read_seq");
+    super.new(name);
+  endfunction
+
   task body();
     bit [31:0] rdata;
+
     cfg_i3c_mode();
     cfg_i2c_mode();
-    vif.slave_read_data[0] <= 8'h11;
-    vif.slave_read_data[1] <= 8'h22;
-    vif.slave_read_length <= 2;
-    vif.slave_ack_addr <= 1'b1;
-    vif.slave_read_en <= 1'b1;
-    vif.slave_i2c_read_mode <= 1'b1;
     send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b1, 8'd2));
     wait_status_idle();
-    vif.slave_ack_addr <= 1'b0;
-    vif.slave_read_en <= 1'b0;
-    vif.slave_read_length <= 0;
-    vif.slave_i2c_read_mode <= 1'b0;
     apb_read(RESP_PORT, rdata);
     expect_eq("I2C private read response", rdata, 32'h0, 32'h3);
     apb_read(RX_PORT, rdata);
@@ -672,11 +519,8 @@ class i3c_broadcast_ccc_seq extends i3c_seq;
   task body();
     bit [31:0] rdata;
     cfg_i3c_mode();
-    vif.ccc_ack_en <= 1'b1;
-    vif.ccc_direct_en <= 1'b0;
     send_apb(WR, CMD_PORT, ccc_cmd(1'b0, CCC_ENEC, 7'h00, 1'b0, 8'd0));
     wait_status_idle();
-    vif.ccc_ack_en <= 1'b0;
     apb_read(RESP_PORT, rdata);
     expect_eq("broadcast CCC response", rdata, 32'h0, 32'h3);
   endtask
@@ -688,20 +532,8 @@ class i3c_direct_ccc_seq extends i3c_seq;
   task body();
     bit [31:0] rdata;
     cfg_i3c_mode();
-    vif.slave_read_data[0] <= 8'h55;
-    vif.slave_read_data[1] <= 8'hAA;
-    vif.slave_read_length <= 1;
-    vif.slave_ack_addr <= 1'b1;
-    vif.slave_read_en <= 1'b1;
-    vif.ccc_ack_en <= 1'b1;
-    vif.ccc_direct_en <= 1'b1;
     send_apb(WR, CMD_PORT, ccc_cmd(1'b1, CCC_GETSTATUS, SLAVE_ADDR, 1'b1, 8'd1));
     wait_status_idle();
-    vif.slave_ack_addr <= 1'b0;
-    vif.slave_read_en <= 1'b0;
-    vif.slave_read_length <= 0;
-    vif.ccc_ack_en <= 1'b0;
-    vif.ccc_direct_en <= 1'b0;
     apb_read(RESP_PORT, rdata);
     expect_eq("direct CCC response", rdata, 32'h0, 32'h3);
     apb_read(RX_PORT, rdata);
@@ -718,11 +550,6 @@ class i3c_direct_ccc_write_seq extends i3c_seq;
     // SETDASA payload carries the new DA in [7:1] and a required zero pad in
     // [0].  The byte_serializer sends the separate odd-parity T-bit.
     send_apb(WR, TX_PORT, {24'h0, NEW_DYNAMIC_ADDR, 1'b0});
-    vif.slave_ack_addr <= 1'b1;
-    vif.slave_i3c_write_tbit_mode <= 1'b1;
-    vif.slave_i2c_write_ack_count <= 1;
-    vif.ccc_ack_en <= 1'b1;
-    vif.ccc_direct_en <= 1'b1;
     send_apb(WR, CMD_PORT, ccc_cmd(1'b1, CCC_SETDASA, SLAVE_ADDR, 1'b0, 8'd1));
     wait_status_idle();
     expect_eq("direct CCC write code observed",
@@ -730,11 +557,6 @@ class i3c_direct_ccc_write_seq extends i3c_seq;
     expect_eq("SETDASA payload observed",
               {24'h0, vif.slave_dbg_write_byte},
               {24'h0, NEW_DYNAMIC_ADDR, 1'b0}, 32'hff);
-    vif.slave_ack_addr <= 1'b0;
-    vif.slave_i3c_write_tbit_mode <= 1'b0;
-    vif.slave_i2c_write_ack_count <= 0;
-    vif.ccc_ack_en <= 1'b0;
-    vif.ccc_direct_en <= 1'b0;
     apb_read(RESP_PORT, rdata);
     expect_eq("direct CCC write response", rdata, 32'h0, 32'h3);
   endtask

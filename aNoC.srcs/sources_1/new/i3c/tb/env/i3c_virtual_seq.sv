@@ -57,28 +57,53 @@ class i3c_target_agent_private_read_vseq extends i3c_virtual_seq;
   endtask
 endclass
 
-class i3c_target_agent_private_write_vseq extends i3c_virtual_seq;
-  `uvm_object_utils(i3c_target_agent_private_write_vseq)
+class i3c_sdr_private_write_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_sdr_private_write_vseq)
 
-  function new(string name = "i3c_target_agent_private_write_vseq");
+  function new(string name = "i3c_sdr_private_write_vseq");
     super.new(name);
   endfunction
 
   task body();
-    i3c_target_txn                     cfg_req;
-    i3c_target_agent_private_write_seq controller_seq;
+    i3c_target_txn          cfg_req;
+    i3c_sdr_private_write_seq controller_seq;
 
     cfg_req = i3c_target_txn::type_id::create("cfg_req");
     cfg_req.op = I3C_TARGET_CONFIG;
     cfg_req.ack_addr = 1'b1;
     // The legacy electrical responder uses this count as the number of write
     // bytes to observe.  In I3C mode it releases, rather than ACKs, each T-bit.
-    cfg_req.i2c_write_ack_count = 2;
+    cfg_req.i2c_write_ack_count = 3;
     cfg_req.i3c_write_tbit_mode = 1'b1;
     configure_target(cfg_req);
 
     controller_seq =
-      i3c_target_agent_private_write_seq::type_id::create("controller_seq");
+      i3c_sdr_private_write_seq::type_id::create("controller_seq");
+    controller_seq.start(p_sequencer.apb_sqr);
+    idle_target();
+  endtask
+endclass
+
+class i3c_sdr_private_write_len4_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_sdr_private_write_len4_vseq)
+
+  function new(string name = "i3c_sdr_private_write_len4_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_target_txn               cfg_req;
+    i3c_sdr_private_write_len4_seq controller_seq;
+
+    cfg_req = i3c_target_txn::type_id::create("cfg_req");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ack_addr = 1'b1;
+    cfg_req.i2c_write_ack_count = 4;
+    cfg_req.i3c_write_tbit_mode = 1'b1;
+    configure_target(cfg_req);
+
+    controller_seq =
+      i3c_sdr_private_write_len4_seq::type_id::create("controller_seq");
     controller_seq.start(p_sequencer.apb_sqr);
     idle_target();
   endtask
@@ -93,7 +118,7 @@ class i3c_target_agent_private_nack_vseq extends i3c_virtual_seq;
 
   task body();
     i3c_target_txn                  cfg_req;
-    i3c_target_agent_private_nack_seq controller_seq;
+    i3c_private_nack_seq controller_seq;
 
     cfg_req = i3c_target_txn::type_id::create("cfg_req");
     cfg_req.op = I3C_TARGET_CONFIG;
@@ -101,7 +126,7 @@ class i3c_target_agent_private_nack_vseq extends i3c_virtual_seq;
     configure_target(cfg_req);
 
     controller_seq =
-      i3c_target_agent_private_nack_seq::type_id::create("controller_seq");
+      i3c_private_nack_seq::type_id::create("controller_seq");
     controller_seq.start(p_sequencer.apb_sqr);
     idle_target();
   endtask
@@ -116,7 +141,7 @@ class i3c_target_agent_short_read_vseq extends i3c_virtual_seq;
 
   task body();
     i3c_target_txn                  cfg_req;
-    i3c_target_agent_short_read_seq controller_seq;
+    i3c_sdr_private_read_short_seq controller_seq;
 
     cfg_req = i3c_target_txn::type_id::create("cfg_req");
     cfg_req.op = I3C_TARGET_CONFIG;
@@ -127,7 +152,7 @@ class i3c_target_agent_short_read_vseq extends i3c_virtual_seq;
     configure_target(cfg_req);
 
     controller_seq =
-      i3c_target_agent_short_read_seq::type_id::create("controller_seq");
+      i3c_sdr_private_read_short_seq::type_id::create("controller_seq");
     controller_seq.start(p_sequencer.apb_sqr);
     idle_target();
   endtask
@@ -142,7 +167,7 @@ class i3c_target_agent_early_end_read_vseq extends i3c_virtual_seq;
 
   task body();
     i3c_target_txn                       cfg_req;
-    i3c_target_agent_early_end_read_seq controller_seq;
+    i3c_sdr_private_read_seq controller_seq;
 
     // Target offers three bytes while the controller descriptor accepts two.
     // The controller must terminate on the second read T-bit.
@@ -157,7 +182,7 @@ class i3c_target_agent_early_end_read_vseq extends i3c_virtual_seq;
     configure_target(cfg_req);
 
     controller_seq =
-      i3c_target_agent_early_end_read_seq::type_id::create("controller_seq");
+      i3c_sdr_private_read_seq::type_id::create("controller_seq");
     controller_seq.start(p_sequencer.apb_sqr);
     idle_target();
   endtask
@@ -172,7 +197,7 @@ class i3c_target_agent_cmd_before_tx_vseq extends i3c_virtual_seq;
 
   task body();
     i3c_target_txn                    cfg_req;
-    i3c_target_agent_cmd_before_tx_seq controller_seq;
+    i3c_cmd_before_tx_seq controller_seq;
 
     cfg_req = i3c_target_txn::type_id::create("cfg_req");
     cfg_req.op = I3C_TARGET_CONFIG;
@@ -182,7 +207,162 @@ class i3c_target_agent_cmd_before_tx_vseq extends i3c_virtual_seq;
     configure_target(cfg_req);
 
     controller_seq =
-      i3c_target_agent_cmd_before_tx_seq::type_id::create("controller_seq");
+      i3c_cmd_before_tx_seq::type_id::create("controller_seq");
+    controller_seq.start(p_sequencer.apb_sqr);
+    idle_target();
+  endtask
+endclass
+
+class i3c_target_agent_i2c_write_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_target_agent_i2c_write_vseq)
+
+  function new(string name = "i3c_target_agent_i2c_write_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_target_txn                cfg_req;
+    i3c_i2c_private_write_seq controller_seq;
+
+    cfg_req = i3c_target_txn::type_id::create("cfg_req");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ack_addr = 1'b1;
+    cfg_req.i2c_write_ack_count = 2;
+    configure_target(cfg_req);
+
+    controller_seq =
+      i3c_i2c_private_write_seq::type_id::create("controller_seq");
+    controller_seq.start(p_sequencer.apb_sqr);
+    idle_target();
+  endtask
+endclass
+
+class i3c_target_agent_i2c_data_nack_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_target_agent_i2c_data_nack_vseq)
+
+  function new(string name = "i3c_target_agent_i2c_data_nack_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_target_txn                    cfg_req;
+    i3c_i2c_private_write_data_nack_seq controller_seq;
+
+    cfg_req = i3c_target_txn::type_id::create("cfg_req");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ack_addr = 1'b1;
+    // ACK byte[0], then stop driving ACK so byte[1] is NACKed.
+    cfg_req.i2c_write_ack_count = 1;
+    configure_target(cfg_req);
+
+    controller_seq =
+      i3c_i2c_private_write_data_nack_seq::type_id::create("controller_seq");
+    controller_seq.start(p_sequencer.apb_sqr);
+    idle_target();
+  endtask
+endclass
+
+class i3c_target_agent_i2c_read_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_target_agent_i2c_read_vseq)
+
+  function new(string name = "i3c_target_agent_i2c_read_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_target_txn               cfg_req;
+    i3c_i2c_private_read_seq controller_seq;
+
+    cfg_req = i3c_target_txn::type_id::create("cfg_req");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ack_addr = 1'b1;
+    cfg_req.read_enable = 1'b1;
+    cfg_req.i2c_read_mode = 1'b1;
+    cfg_req.read_data = new[2];
+    cfg_req.read_data[0] = 8'h11;
+    cfg_req.read_data[1] = 8'h22;
+    configure_target(cfg_req);
+
+    controller_seq =
+      i3c_i2c_private_read_seq::type_id::create("controller_seq");
+    controller_seq.start(p_sequencer.apb_sqr);
+    idle_target();
+  endtask
+endclass
+
+class i3c_broadcast_ccc_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_broadcast_ccc_vseq)
+
+  function new(string name = "i3c_broadcast_ccc_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_target_txn       cfg_req;
+    i3c_broadcast_ccc_seq controller_seq;
+
+    cfg_req = i3c_target_txn::type_id::create("cfg_req");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ccc_ack_enable = 1'b1;
+    configure_target(cfg_req);
+
+    controller_seq =
+      i3c_broadcast_ccc_seq::type_id::create("controller_seq");
+    controller_seq.start(p_sequencer.apb_sqr);
+    idle_target();
+  endtask
+endclass
+
+class i3c_direct_ccc_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_direct_ccc_vseq)
+
+  function new(string name = "i3c_direct_ccc_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_target_txn    cfg_req;
+    i3c_direct_ccc_seq controller_seq;
+
+    cfg_req = i3c_target_txn::type_id::create("cfg_req");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ack_addr = 1'b1;
+    cfg_req.read_enable = 1'b1;
+    cfg_req.ccc_ack_enable = 1'b1;
+    cfg_req.ccc_direct_enable = 1'b1;
+    cfg_req.read_data = new[1];
+    cfg_req.read_data[0] = 8'h55;
+    configure_target(cfg_req);
+
+    controller_seq =
+      i3c_direct_ccc_seq::type_id::create("controller_seq");
+    controller_seq.start(p_sequencer.apb_sqr);
+    idle_target();
+  endtask
+endclass
+
+class i3c_direct_ccc_write_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_direct_ccc_write_vseq)
+
+  function new(string name = "i3c_direct_ccc_write_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_target_txn          cfg_req;
+    i3c_direct_ccc_write_seq controller_seq;
+
+    cfg_req = i3c_target_txn::type_id::create("cfg_req");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ack_addr = 1'b1;
+    cfg_req.i2c_write_ack_count = 1;
+    cfg_req.i3c_write_tbit_mode = 1'b1;
+    cfg_req.ccc_ack_enable = 1'b1;
+    cfg_req.ccc_direct_enable = 1'b1;
+    configure_target(cfg_req);
+
+    controller_seq =
+      i3c_direct_ccc_write_seq::type_id::create("controller_seq");
     controller_seq.start(p_sequencer.apb_sqr);
     idle_target();
   endtask
