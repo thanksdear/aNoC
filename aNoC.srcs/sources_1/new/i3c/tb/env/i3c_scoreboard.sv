@@ -289,6 +289,9 @@ class i3c_expected_op extends uvm_sequence_item;
   bit            tx_model_complete;
   // legacy I2C 写是否预期在最后一个已发送 byte 后收到数据 NACK。
   logic          expect_i2c_data_nack;
+  // 命令完成后 response descriptor 的低两位：
+  // [1]=NACK error，[0]=I3C write parity error。
+  logic [1:0]    expected_response;
   // 应在总线上出现的写/读 payload。名称中的 expected 由所属对象语义体现。
   logic [7:0]    write_data[$];
   logic [7:0]    read_data[$];
@@ -315,6 +318,7 @@ class i3c_expected_op extends uvm_sequence_item;
     `uvm_field_int(target_read_length, UVM_ALL_ON)
     `uvm_field_int(tx_model_complete, UVM_ALL_ON)
     `uvm_field_int(expect_i2c_data_nack, UVM_ALL_ON)
+    `uvm_field_int(expected_response, UVM_ALL_ON)
     `uvm_field_queue_int(write_data, UVM_ALL_ON)
     `uvm_field_queue_int(read_data, UVM_ALL_ON)
     `uvm_field_queue_object(entdaa_rounds, UVM_ALL_ON)
@@ -335,6 +339,7 @@ class i3c_expected_op extends uvm_sequence_item;
     target_read_length     = 0;
     tx_model_complete      = 1'b1;
     expect_i2c_data_nack   = 1'b0;
+    expected_response      = 2'b00;
     expect_entdaa_final_nack = 1'b0;
   endfunction
 endclass
@@ -675,6 +680,46 @@ class i3c_cmd_predictor extends uvm_component;
       expected.expect_entdaa_final_nack = 1'b0;
   endfunction
 
+  // 根据命令和独立 target plan 预测 response descriptor，不能读取 DUT 的
+  // RESP_PORT、ERR_STATUS 或 bus monitor 的实际错误结果来生成期望值。
+  function void predict_command_result(i3c_expected_op expected);
+    logic expect_nack;
+    logic expect_parity_error;
+
+    expect_nack = 1'b0;
+    case (expected.kind)
+      I3C_KIND_PRIVATE:
+        expect_nack = !expected.expect_target_ack ||
+                      expected.expect_i2c_data_nack;
+      I3C_KIND_BROADCAST_CCC:
+        expect_nack = !expected.expect_bcast_ack;
+      I3C_KIND_DIRECT_CCC:
+        expect_nack = !expected.expect_bcast_ack ||
+                      (expected.expect_bcast_ack &&
+                       !expected.expect_target_ack);
+      I3C_KIND_ENTDAA: begin
+        expect_nack = !expected.expect_bcast_ack;
+        foreach (expected.entdaa_rounds[i])
+          if (!expected.entdaa_rounds[i].expect_da_ack)
+            expect_nack = 1'b1;
+      end
+      default:
+        expect_nack = 1'b0;
+    endcase
+
+    // 当前 fault injector 只作用于 private/direct I3C write payload。
+    // 地址未 ACK、读方向或索引没有落入实际发送 payload 时不会产生 parity error。
+    expect_parity_error =
+      expected.i3c_mode && !expected.rw &&
+      ((expected.kind == I3C_KIND_PRIVATE) ||
+       (expected.kind == I3C_KIND_DIRECT_CCC)) &&
+      expected.expect_target_ack &&
+      (expected.write_parity_error_index >= 0) &&
+      (expected.write_parity_error_index < expected.write_data.size());
+
+    expected.expected_response = {expect_nack, expect_parity_error};
+  endfunction
+
   // 补全并发布一条 expected。
   // 输入 expected 是 decode_command() 产生的命令骨架；本任务依命令类型取得一条
   // 或两条 target intent，绑定 ACK/TX/RX/ENTDAA 信息，最后 expected_ap.write()。
@@ -816,8 +861,10 @@ class i3c_cmd_predictor extends uvm_component;
       // 只有命令仍属于当前 reset epoch 时才发布。复位打断的半条 expected 会被
       // 直接丢弃，避免它与复位后的 actual 错位配对。
       if ((vif.rst_n === 1'b1) &&
-          (expected.reset_epoch == vif.tb_reset_epoch))
+          (expected.reset_epoch == vif.tb_reset_epoch)) begin
+        predict_command_result(expected);
         expected_ap.write(expected);
+      end
     end
     active_command_count--;
   endtask
@@ -927,8 +974,11 @@ endclass
 class i3c_bus_scoreboard extends uvm_scoreboard;
   `uvm_component_utils(i3c_bus_scoreboard)
 
-  localparam bit [7:0] REG_CTRL = 8'h08;
-  localparam bit [7:0] RX_PORT  = 8'h2c;
+  localparam bit [7:0] REG_CTRL       = 8'h08;
+  localparam bit [7:0] REG_IBI_STATUS = 8'h10;
+  localparam bit [7:0] REG_ERR_STATUS = 8'h14;
+  localparam bit [7:0] RESP_PORT      = 8'h24;
+  localparam bit [7:0] RX_PORT        = 8'h2c;
 
   virtual i3c_if vif;
 
@@ -957,6 +1007,12 @@ class i3c_bus_scoreboard extends uvm_scoreboard;
   // 绝不能把 bus monitor 的 actual.data 放进来，否则 RX_PORT 比较会与 actual 同源，
   // DUT 即使在总线和 RX FIFO 上同时犯同样的错也可能被错误判为通过。
   logic [7:0] expected_rx_q[$];
+  // 独立预测的 response FIFO、粘滞错误状态和 IRQ 电平模型。
+  logic [1:0] expected_response_q[$];
+  logic [1:0] expected_err_status_model;
+  logic       expected_irq_model;
+  int unsigned response_change_seq;
+  int          active_response_read_count;
 
   // CTRL[3] ibi_en 和 CTRL[4] ibi_mdb_en 的轻量软件镜像。
   // 它们不替代 CSR scoreboard，只为解释一笔 IBI 在当前配置下是否合法。
@@ -971,6 +1027,8 @@ class i3c_bus_scoreboard extends uvm_scoreboard;
     bus_fifo      = new("bus_fifo", this);
     apb_fifo      = new("apb_fifo", this);
     ibi_intent_fifo = new("ibi_intent_fifo", this);
+    response_change_seq = 0;
+    active_response_read_count = 0;
   endfunction
 
   function void build_phase(uvm_phase phase);
@@ -988,6 +1046,10 @@ class i3c_bus_scoreboard extends uvm_scoreboard;
     bus_fifo.flush();
     ibi_intent_fifo.flush();
     expected_rx_q.delete();
+    expected_response_q.delete();
+    expected_err_status_model = 2'b00;
+    expected_irq_model = 1'b0;
+    response_change_seq++;
   endfunction
 
   // 硬复位比软件复位更彻底：除传输状态外，还清 APB backlog，并将 CTRL 的
@@ -1048,6 +1110,22 @@ class i3c_bus_scoreboard extends uvm_scoreboard;
         $sformatf("0x%02h", actual),
         $sformatf("0x%02h", expected)
       );
+  endfunction
+
+  function void check_word(string field_name, logic [31:0] actual,
+                           logic [31:0] expected);
+    if (actual !== expected)
+      report_mismatch(
+        field_name,
+        $sformatf("0x%08h", actual),
+        $sformatf("0x%08h", expected)
+      );
+    else
+      `uvm_info(
+        "I3C_SB",
+        $sformatf("%s PASS: 0x%08h", field_name, actual),
+        UVM_LOW
+      )
   endfunction
 
   // ENTDAA 的 PID/BCR/DCR 组合身份字段为连续 64 bit，单独提供比较函数。
@@ -1851,6 +1929,60 @@ class i3c_bus_scoreboard extends uvm_scoreboard;
 
   // --------------------------- 运行时取数与配对 ------------------------------
 
+  function void record_expected_command_result(i3c_expected_op expected);
+    expected_response_q.push_back(expected.expected_response);
+    expected_err_status_model |= expected.expected_response;
+    expected_irq_model = 1'b1;
+    response_change_seq++;
+  endfunction
+
+  // IRQ 是跨多个内部模块形成的电平信号，允许 RTL 在总线 STOP 后用少量 PCLK
+  // 完成 response 入 FIFO。这里检查最终稳定值，而不把内部单周期状态写死进 TB。
+  task check_irq_eventually(logic expected, string reason);
+    for (int i = 0; i < 8; i++) begin
+      @(negedge vif.clk);
+      if (vif.irq === expected)
+        return;
+    end
+    report_mismatch(
+      $sformatf("IRQ after %s", reason),
+      $sformatf("%b", vif.irq),
+      $sformatf("%b", expected)
+    );
+  endtask
+
+  task get_expected_response_or_reset(
+    output logic [1:0] response,
+    output bit         valid
+  );
+    longint unsigned read_epoch;
+    int unsigned     wake_seq;
+
+    response = 2'b00;
+    valid = 1'b0;
+    read_epoch = vif.tb_reset_epoch;
+    active_response_read_count++;
+
+    while (expected_response_q.size() == 0) begin
+      if ((vif.rst_n !== 1'b1) ||
+          (vif.tb_reset_epoch != read_epoch)) begin
+        active_response_read_count--;
+        return;
+      end
+      wake_seq = response_change_seq;
+      wait ((response_change_seq != wake_seq) ||
+            (vif.rst_n !== 1'b1) ||
+            (vif.tb_reset_epoch != read_epoch));
+    end
+
+    if ((vif.rst_n === 1'b1) &&
+        (vif.tb_reset_epoch == read_epoch)) begin
+      response = expected_response_q.pop_front();
+      valid = 1'b1;
+    end
+    active_response_read_count--;
+  endtask
+
   // 总线事务主线程。
   // 先阻塞等待 bus monitor 发布一笔完整 actual，再根据发起方选择 expected 来源：
   //   target-origin     -> IBI plan FIFO；
@@ -1874,6 +2006,8 @@ class i3c_bus_scoreboard extends uvm_scoreboard;
           )
         else
           compare_ibi(actual, ibi_expected);
+        expected_irq_model = 1'b1;
+        check_irq_eventually(expected_irq_model, "IBI completion");
         continue;
       end
 
@@ -1903,17 +2037,22 @@ class i3c_bus_scoreboard extends uvm_scoreboard;
         continue;
       end
       compare_expected_transfer(actual, expected);
+      record_expected_command_result(expected);
+      check_irq_eventually(expected_irq_model, "command response");
     end
   endtask
 
   // APB 旁路处理线程。
   // 输入仍来自同一个 APB monitor，但本类只关心：
   //   1. CTRL 写：维护 IBI 配置镜像，处理软件复位；
-  //   2. RX_PORT 读：检查 DUT RX FIFO 交给软件的 byte。
+  //   2. RESP/ERR_STATUS/IRQ：检查独立预测的命令结果；
+  //   3. RX_PORT 读：检查 DUT RX FIFO 交给软件的 byte。
   // TX_PORT/CMD_PORT 已由 predictor 消费，这里无需重复处理。
   task process_apb();
     i3c_txn apb_tr;
     logic [7:0] expected_byte;
+    logic [1:0] expected_response;
+    bit         response_valid;
 
     forever begin
       apb_fifo.get(apb_tr);
@@ -1924,8 +2063,46 @@ class i3c_bus_scoreboard extends uvm_scoreboard;
         // 只有低 byte strobe 有效时 CTRL[4:0] 的写入才生效。
         ibi_en_model     = apb_tr.data[3];
         ibi_mdb_en_model = apb_tr.data[4];
-        if (apb_tr.data[2])
+        if (apb_tr.data[2]) begin
           flush_transactions();
+          check_irq_eventually(expected_irq_model, "software reset");
+        end
+      end
+      else if ((apb_tr.op == RD) && (apb_tr.addr == RESP_PORT)) begin
+        get_expected_response_or_reset(expected_response, response_valid);
+        if (response_valid)
+          check_word(
+            "RESP_PORT data",
+            apb_tr.data,
+            {30'd0, expected_response}
+          );
+        else
+          `uvm_error(
+            "I3C_SB",
+            $sformatf(
+              "RESP_PORT returned 0x%08h with no independently predicted response",
+              apb_tr.data
+            )
+          )
+        expected_irq_model = 1'b0;
+        check_irq_eventually(expected_irq_model, "RESP_PORT read");
+      end
+      else if ((apb_tr.op == RD) && (apb_tr.addr == REG_ERR_STATUS)) begin
+        check_word(
+          "ERR_STATUS data",
+          apb_tr.data,
+          {30'd0, expected_err_status_model}
+        );
+      end
+      else if ((apb_tr.op == WR) && (apb_tr.addr == REG_ERR_STATUS) &&
+               apb_tr.strb[0]) begin
+        expected_err_status_model &=
+          ~apb_tr.data[1:0];
+      end
+      else if ((apb_tr.op == WR) && (apb_tr.addr == REG_IBI_STATUS) &&
+               apb_tr.strb[2] && apb_tr.data[16]) begin
+        expected_irq_model = 1'b0;
+        check_irq_eventually(expected_irq_model, "IBI_STATUS clear");
       end
       else if ((apb_tr.op == RD) && (apb_tr.addr == RX_PORT)) begin
         // APB 每读一次 RX_PORT，就应按顺序取出一个独立预测的 RX byte。
@@ -1961,7 +2138,8 @@ class i3c_bus_scoreboard extends uvm_scoreboard;
   //   bus_fifo 非空     ：monitor 发布了 actual，但比较线程没有消费完；
   //   apb_fifo 非空     ：APB 旁路线程未消费完 monitor 广播；
   //   ibi_intent_fifo非空：target 计划发 IBI，但总线上没有出现对应 IBI；
-  //   expected_rx_q 非空：预测有数据进入 RX FIFO，但软件从未全部读走。
+  //   expected_rx_q 非空：预测有数据进入 RX FIFO，但软件从未全部读走；
+  //   expected_response_q 非空：命令生成了 response，但软件没有读完。
   function void check_phase(uvm_phase phase);
     super.check_phase(phase);
     if (expected_fifo.used() != 0)
@@ -1989,6 +2167,18 @@ class i3c_bus_scoreboard extends uvm_scoreboard;
       `uvm_error(
         "I3C_SB",
         $sformatf("%0d predicted RX byte(s) were never read", expected_rx_q.size())
+      )
+    if (expected_response_q.size() != 0)
+      `uvm_error(
+        "I3C_SB",
+        $sformatf("%0d predicted response(s) were never read",
+                  expected_response_q.size())
+      )
+    if (active_response_read_count != 0)
+      `uvm_error(
+        "I3C_SB",
+        $sformatf("%0d RESP_PORT read check(s) are still waiting for prediction",
+                  active_response_read_count)
       )
   endfunction
 endclass

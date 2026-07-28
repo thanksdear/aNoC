@@ -250,7 +250,6 @@ class i3c_bus_timing_seq extends i3c_seq;
     send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd1));
     wait_status_idle();
     apb_read(RESP_PORT, rdata);
-    expect_eq("timing transfer response", rdata, 32'h0, 32'h3);
   endtask
 endclass
 
@@ -266,9 +265,7 @@ class i3c_sdr_private_write_seq extends i3c_seq;
     send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd3));
     wait_status_idle();
     apb_read(RESP_PORT, rdata);
-    expect_eq("SDR private write response", rdata, 32'h0, 32'h3);
     apb_read(REG_ERR_STATUS, rdata);
-    expect_eq("SDR private write ERR_STATUS", rdata, 32'h0, 32'h3);
   endtask
 endclass
 
@@ -290,19 +287,9 @@ class i3c_sdr_write_parity_error_seq extends i3c_seq;
     wait_irq_asserted();
 
     apb_read(RESP_PORT, rdata);
-    expect_eq("parity-error response", rdata,
-              32'h0000_0001, 32'h0000_0003);
     apb_read(REG_ERR_STATUS, rdata);
-    expect_eq("parity-error ERR_STATUS set", rdata,
-              32'h0000_0001, 32'h0000_0003);
     send_apb(WR, REG_ERR_STATUS, 32'h0000_0001);
     apb_read(REG_ERR_STATUS, rdata);
-    expect_eq("parity-error ERR_STATUS clear", rdata,
-              32'h0000_0000, 32'h0000_0003);
-
-    repeat (2) @(posedge vif.clk);
-    if (vif.irq)
-      `uvm_error("IRQ", "IRQ did not clear after parity-error RESP read")
   endtask
 endclass
 
@@ -319,7 +306,6 @@ class i3c_sdr_private_write_len4_seq extends i3c_seq;
     send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd4));
     wait_status_idle();
     apb_read(RESP_PORT, rdata);
-    expect_eq("SDR private write len4 response", rdata, 32'h0, 32'h3);
   endtask
 endclass
 
@@ -340,7 +326,6 @@ class i3c_target_agent_private_read_seq extends i3c_seq;
     send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b1, 8'd2));
     wait_status_idle();
     apb_read(RESP_PORT, rdata);
-    expect_eq("target-agent private read response", rdata, 32'h0, 32'h3);
     apb_read(RX_PORT, rdata);
     expect_eq("target-agent RX byte0", rdata, 32'hbe, 32'hff);
     apb_read(RX_PORT, rdata);
@@ -363,15 +348,9 @@ class i3c_private_nack_seq extends i3c_seq;
     wait_status_idle();
     wait_irq_asserted();
     apb_read(RESP_PORT, rdata);
-    expect_eq("private NACK response", rdata,
-              32'h0000_0002, 32'h0000_0002);
     apb_read(REG_ERR_STATUS, rdata);
-    expect_eq("private NACK ERR_STATUS set", rdata,
-              32'h0000_0002, 32'h0000_0002);
     send_apb(WR, REG_ERR_STATUS, 32'h0000_0002);
     apb_read(REG_ERR_STATUS, rdata);
-    expect_eq("private NACK ERR_STATUS clear", rdata,
-              32'h0000_0000, 32'h0000_0003);
   endtask
 endclass
 
@@ -389,7 +368,6 @@ class i3c_sdr_private_read_short_seq extends i3c_seq;
     send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b1, 8'd3));
     wait_status_idle();
     apb_read(RESP_PORT, rdata);
-    expect_eq("SDR short-read response", rdata, 32'h0, 32'h3);
     apb_read(RX_PORT, rdata);
     expect_eq("SDR short-read RX byte0", rdata, 32'he1, 32'hff);
   endtask
@@ -409,7 +387,6 @@ class i3c_sdr_private_read_seq extends i3c_seq;
     send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b1, 8'd2));
     wait_status_idle();
     apb_read(RESP_PORT, rdata);
-    expect_eq("SDR private read response", rdata, 32'h0, 32'h3);
     apb_read(RX_PORT, rdata);
     expect_eq("SDR RX byte0", rdata, 32'h3c, 32'hff);
     apb_read(RX_PORT, rdata);
@@ -470,7 +447,6 @@ class i3c_cmd_before_tx_seq extends i3c_seq;
     send_apb(WR, TX_PORT, 32'h0000_00e2);
     wait_status_idle();
     apb_read(RESP_PORT, rdata);
-    expect_eq("CMD-before-TX response", rdata, 32'h0, 32'h3);
   endtask
 endclass
 
@@ -491,7 +467,6 @@ class i3c_i2c_private_write_seq extends i3c_seq;
     send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd2));
     wait_status_idle();
     apb_read(RESP_PORT, rdata);
-    expect_eq("I2C private write response", rdata, 32'h0, 32'h3);
   endtask
 endclass
 
@@ -512,11 +487,7 @@ class i3c_i2c_private_write_data_nack_seq extends i3c_seq;
     send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd2));
     wait_status_idle();
     apb_read(RESP_PORT, rdata);
-    expect_eq("I2C data NACK response", rdata,
-              32'h0000_0002, 32'h0000_0003);
     apb_read(REG_ERR_STATUS, rdata);
-    expect_eq("I2C data NACK ERR_STATUS", rdata,
-              32'h0000_0002, 32'h0000_0002);
     send_apb(WR, REG_ERR_STATUS, 32'h0000_0002);
   endtask
 endclass
@@ -536,7 +507,6 @@ class i3c_i2c_private_read_seq extends i3c_seq;
     send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b1, 8'd2));
     wait_status_idle();
     apb_read(RESP_PORT, rdata);
-    expect_eq("I2C private read response", rdata, 32'h0, 32'h3);
     apb_read(RX_PORT, rdata);
     expect_eq("I2C RX byte0", rdata, 32'h11, 32'hff);
     apb_read(RX_PORT, rdata);
@@ -553,7 +523,6 @@ class i3c_broadcast_ccc_seq extends i3c_seq;
     send_apb(WR, CMD_PORT, ccc_cmd(1'b0, CCC_ENEC, 7'h00, 1'b0, 8'd0));
     wait_status_idle();
     apb_read(RESP_PORT, rdata);
-    expect_eq("broadcast CCC response", rdata, 32'h0, 32'h3);
   endtask
 endclass
 
@@ -566,7 +535,6 @@ class i3c_direct_ccc_seq extends i3c_seq;
     send_apb(WR, CMD_PORT, ccc_cmd(1'b1, CCC_GETSTATUS, SLAVE_ADDR, 1'b1, 8'd1));
     wait_status_idle();
     apb_read(RESP_PORT, rdata);
-    expect_eq("direct CCC response", rdata, 32'h0, 32'h3);
     apb_read(RX_PORT, rdata);
     expect_eq("direct CCC RX byte0", rdata, 32'h55, 32'hff);
   endtask
@@ -589,7 +557,6 @@ class i3c_direct_ccc_write_seq extends i3c_seq;
               {24'h0, vif.target_dbg_write_byte},
               {24'h0, NEW_DYNAMIC_ADDR, 1'b0}, 32'hff);
     apb_read(RESP_PORT, rdata);
-    expect_eq("direct CCC write response", rdata, 32'h0, 32'h3);
   endtask
 endclass
 
@@ -602,7 +569,6 @@ class i3c_entdaa_seq extends i3c_seq;
     send_apb(WR, CMD_PORT, ccc_cmd(1'b0, CCC_ENTDAA, 7'h00, 1'b0, 8'd0));
     wait_status_idle();
     apb_read(RESP_PORT, rdata);
-    expect_eq("ENTDAA response", rdata, 32'h0, 32'h3);
     apb_read(REG_ENTDAA_STATUS, rdata);
     expect_eq("ENTDAA assigned DA", rdata, 32'h0000_0101, 32'h0000_01ff);
     apb_read(REG_ENTDAA_PID_LO, rdata);
@@ -632,8 +598,6 @@ class i3c_dynamic_addr_private_write_seq extends i3c_seq;
     );
     wait_status_idle();
     apb_read(RESP_PORT, rdata);
-    expect_eq("dynamic-address private write response",
-              rdata, 32'h0, 32'h3);
   endtask
 endclass
 
@@ -655,8 +619,6 @@ class i3c_dynamic_addr_private_read_seq extends i3c_seq;
     );
     wait_status_idle();
     apb_read(RESP_PORT, rdata);
-    expect_eq("dynamic-address private read response",
-              rdata, 32'h0, 32'h3);
     apb_read(RX_PORT, rdata);
     expect_eq("dynamic-address RX byte0", rdata, 32'ha6, 32'hff);
     apb_read(RX_PORT, rdata);
@@ -736,7 +698,6 @@ class i3c_polling_access_seq extends i3c_seq;
       `uvm_error("POLL", "STATUS.busy did not clear before polling timeout")
 
     apb_read(RESP_PORT, rdata);
-    expect_eq("polling response", rdata, 32'h0, 32'h3);
   endtask
 endclass
 
@@ -794,7 +755,6 @@ class i3c_sw_reset_seq extends i3c_seq;
     send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd0));
     wait_status_idle();
     apb_read(RESP_PORT, rdata);
-    expect_eq("post-sw_rst response", rdata, 32'h0, 32'h3);
   endtask
 endclass
 
@@ -812,7 +772,6 @@ class i3c_bus_timing_sweep_seq extends i3c_seq;
     send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd0));
     wait_status_idle();
     apb_read(RESP_PORT, rdata);
-    expect_eq($sformatf("timing sweep response[%0d]", case_id), rdata, 32'h0, 32'h3);
   endtask
 
   task body();
@@ -831,9 +790,5 @@ class i3c_irq_access_seq extends i3c_seq;
     send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd0));
     wait_irq_asserted();
     apb_read(RESP_PORT, rdata);
-    expect_eq("IRQ response", rdata, 32'h0, 32'h3);
-    repeat (2) @(posedge vif.clk);
-    if (vif.irq)
-      `uvm_error("IRQ", "IRQ did not clear after RESP read")
   endtask
 endclass
