@@ -456,9 +456,8 @@ class i3c_queued_parity_recovery_seq extends i3c_seq;
   endtask
 endclass
 
-// APB/controller half of the target-agent smoke scenario.  Unlike the legacy
-// feature sequences, this sequence never writes target sideband signals; its
-// peer behavior must arrive through env.tgt.sqr.
+// APB/controller half of the target-agent smoke scenario. Target behavior is
+// configured independently through env.tgt.sqr.
 class i3c_target_agent_private_read_seq extends i3c_seq;
   `uvm_object_utils(i3c_target_agent_private_read_seq)
 

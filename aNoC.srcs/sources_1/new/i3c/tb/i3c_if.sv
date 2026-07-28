@@ -26,8 +26,6 @@ interface i3c_if (input logic clk);
     logic [7:0]  target_dbg_addr_byte;
     logic [7:0]  target_dbg_ccc_byte;
     logic [7:0]  target_dbg_write_byte;
-    logic [7:0]  target_dbg_entdaa_da;
-    logic        target_dbg_matched;
     logic        target_dbg_ack_phase;
 
   // 驱动视角:我驱动的是 output, 我观察的是 input

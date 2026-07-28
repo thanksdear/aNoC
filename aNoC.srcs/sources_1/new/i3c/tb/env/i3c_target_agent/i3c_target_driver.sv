@@ -335,8 +335,6 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
     vif.target_dbg_addr_byte <= 8'h00;
     vif.target_dbg_ccc_byte <= 8'h00;
     vif.target_dbg_write_byte <= 8'h00;
-    vif.target_dbg_entdaa_da <= 8'h00;
-    vif.target_dbg_matched <= 1'b0;
     vif.target_dbg_ack_phase <= 1'b0;
   endtask
 
@@ -417,7 +415,6 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
         @(posedge vif.scl_in);
         da_byte[bit_idx] = vif.sda_in;
       end
-      vif.target_dbg_entdaa_da <= da_byte;
 
       da_valid = ((^da_byte) === 1'b1) &&
                  (da_byte[7:1] === cfg.entdaa_expected_da);
@@ -467,7 +464,6 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
 
     vif.target_drive_low <= 1'b0;
     vif.target_fault_drive_low <= 1'b0;
-    vif.target_dbg_matched <= 1'b0;
     vif.target_dbg_ack_phase <= 1'b0;
     direct_target_frame = 1'b0;
     active_direct_ccc_code = 8'h00;
@@ -486,7 +482,6 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
       pending_direct_ccc_code = 8'h00;
       matched = ack_addr &&
                 (addr_byte[7:1] == effective_addr());
-      vif.target_dbg_matched <= matched;
       publish_intent(TARGET_INTENT_CCC_DIRECT, effective_addr(),
                      addr_byte[0], ack_addr);
       @(negedge vif.scl_in);
@@ -499,7 +494,6 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
       vif.target_dbg_ack_phase <= 1'b0;
     end else if (addr_byte == 8'hfc) begin // CCC broadcast write
       matched = ccc_ack_enable;
-      vif.target_dbg_matched <= matched;
       publish_intent(TARGET_INTENT_CCC_BCAST, 7'h7e,
                      1'b0, ccc_ack_enable);
       @(negedge vif.scl_in);
@@ -541,7 +535,6 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
     end else begin
       matched = ack_addr &&
                 (addr_byte[7:1] == effective_addr());
-      vif.target_dbg_matched <= matched;
       publish_intent(TARGET_INTENT_PRIVATE, effective_addr(),
                      addr_byte[0], ack_addr);
       @(negedge vif.scl_in);

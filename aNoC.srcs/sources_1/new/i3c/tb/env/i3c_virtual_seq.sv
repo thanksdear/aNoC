@@ -71,8 +71,8 @@ class i3c_sdr_private_write_vseq extends i3c_virtual_seq;
     cfg_req = i3c_target_txn::type_id::create("cfg_req");
     cfg_req.op = I3C_TARGET_CONFIG;
     cfg_req.ack_addr = 1'b1;
-    // The legacy electrical responder uses this count as the number of write
-    // bytes to observe.  In I3C mode it releases, rather than ACKs, each T-bit.
+    // Tell the target model how many controller write bytes to observe. In
+    // I3C mode it releases, rather than ACKs, each T-bit.
     cfg_req.i2c_write_ack_count = 3;
     cfg_req.i3c_write_tbit_mode = 1'b1;
     configure_target(cfg_req);

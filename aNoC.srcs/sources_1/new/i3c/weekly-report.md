@@ -4,6 +4,10 @@
 > 当前 Git HEAD：`ba8d3fd`，工作区有未提交修改  
 > RTL/TB dirty diff SHA-256：`e2636dd96bfc3f18e131b88a44cbb3ddea273e7558b29df86f12b22f214b66f5`  
 > 结论范围：只代表当前磁盘快照，不沿用缺失的旧日志或覆盖率数字
+>
+> 归档说明：本文是历史周报。迁移到 active target agent 和 UVM
+> regression 后，旧非 UVM `tb/unit` 验证文件已经删除；其中的文件路径和
+> 静态检查命令不再适用于当前版本。
 
 ## 本周结论
 
