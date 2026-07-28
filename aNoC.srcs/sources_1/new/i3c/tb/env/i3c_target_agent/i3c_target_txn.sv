@@ -29,6 +29,9 @@ class i3c_target_txn extends uvm_sequence_item;
   rand logic          i2c_read_mode;
   rand logic          i3c_write_tbit_mode;
   rand int unsigned   i2c_write_ack_count;
+  // -1 disables injection; otherwise corrupt this zero-based I3C write
+  // payload byte's odd-parity T-bit.
+  rand int            write_parity_error_index;
   rand logic          ccc_ack_enable;
   rand logic          ccc_direct_enable;
   rand logic          entdaa_participate;
@@ -51,6 +54,7 @@ class i3c_target_txn extends uvm_sequence_item;
     `uvm_field_int(i2c_read_mode, UVM_ALL_ON)
     `uvm_field_int(i3c_write_tbit_mode, UVM_ALL_ON)
     `uvm_field_int(i2c_write_ack_count, UVM_ALL_ON)
+    `uvm_field_int(write_parity_error_index, UVM_ALL_ON)
     `uvm_field_int(ccc_ack_enable, UVM_ALL_ON)
     `uvm_field_int(ccc_direct_enable, UVM_ALL_ON)
     `uvm_field_int(entdaa_participate, UVM_ALL_ON)
@@ -69,6 +73,7 @@ class i3c_target_txn extends uvm_sequence_item;
     i2c_read_mode = 1'b0;
     i3c_write_tbit_mode = 1'b0;
     i2c_write_ack_count = 0;
+    write_parity_error_index = -1;
     ccc_ack_enable = 1'b0;
     ccc_direct_enable = 1'b0;
     entdaa_participate = 1'b0;

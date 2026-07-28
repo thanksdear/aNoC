@@ -83,11 +83,12 @@ class i3c_bus_segment extends uvm_sequence_item;
   // 从 header[0] 拆出的读写方向。
   i3c_direction_e    direction;
 
-  // data[i] 与下面三个 ninth-bit 队列的索引必须一一对应：
+  // data[i] 与下面四个 ninth-bit 队列的索引必须一一对应：
   // data[i]                     第 i 个数据 byte；
   // data_ninth_bits[i]          总线上解析到的第九位；
   // controller_low[i]           第九位时 controller 是否主动拉低；
   // target_low[i]               第九位时 target 是否主动拉低。
+  // fault_low[i]                第九位时故障注入器是否主动拉低。
   logic [7:0]        data[$];
   logic              data_ninth_bits[$];
   // 只保存 resolved SDA 不够：读到 0 无法判断是谁拉低。额外记录两侧
@@ -95,6 +96,7 @@ class i3c_bus_segment extends uvm_sequence_item;
   // 结束，而不是仅用同一个 resolved 值证明自己。
   logic              data_ninth_controller_low[$];
   logic              data_ninth_target_low[$];
+  logic              data_ninth_fault_low[$];
 
   // 这两个字段是 end_boundary 的便捷形式，主要供 coverage 和日志使用。
   bit                ended_by_restart;
@@ -114,6 +116,7 @@ class i3c_bus_segment extends uvm_sequence_item;
     `uvm_field_queue_int(data_ninth_bits, UVM_ALL_ON)
     `uvm_field_queue_int(data_ninth_controller_low, UVM_ALL_ON)
     `uvm_field_queue_int(data_ninth_target_low, UVM_ALL_ON)
+    `uvm_field_queue_int(data_ninth_fault_low, UVM_ALL_ON)
     `uvm_field_int(ended_by_restart, UVM_ALL_ON)
     `uvm_field_int(ended_by_stop, UVM_ALL_ON)
   `uvm_object_utils_end

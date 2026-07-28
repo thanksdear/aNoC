@@ -473,6 +473,9 @@ class i3c_bus_monitor extends uvm_monitor;
                 segment.data_ninth_target_low.push_back(
                   vif.target_drive_low === 1'b1
                 );
+                segment.data_ninth_fault_low.push_back(
+                  vif.target_fault_drive_low === 1'b1
+                );
                 if (has_entdaa_prefix(tr, segment)) begin
                   // CCC code 0x07 本身仍是普通 I3C write byte，它的第九位
                   // 是 controller 发送的 parity T-bit。必须等随后的 Sr 才

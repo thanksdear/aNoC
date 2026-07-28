@@ -84,6 +84,32 @@ class i3c_sdr_private_write_vseq extends i3c_virtual_seq;
   endtask
 endclass
 
+class i3c_sdr_write_parity_error_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_sdr_write_parity_error_vseq)
+
+  function new(string name = "i3c_sdr_write_parity_error_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_target_txn                   cfg_req;
+    i3c_sdr_write_parity_error_seq   controller_seq;
+
+    cfg_req = i3c_target_txn::type_id::create("cfg_req");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ack_addr = 1'b1;
+    cfg_req.i2c_write_ack_count = 1;
+    cfg_req.i3c_write_tbit_mode = 1'b1;
+    cfg_req.write_parity_error_index = 0;
+    configure_target(cfg_req);
+
+    controller_seq =
+      i3c_sdr_write_parity_error_seq::type_id::create("controller_seq");
+    controller_seq.start(p_sequencer.apb_sqr);
+    idle_target();
+  endtask
+endclass
+
 class i3c_sdr_private_write_len4_vseq extends i3c_virtual_seq;
   `uvm_object_utils(i3c_sdr_private_write_len4_vseq)
 
@@ -387,6 +413,58 @@ class i3c_entdaa_vseq extends i3c_virtual_seq;
 
     controller_seq = i3c_entdaa_seq::type_id::create("controller_seq");
     controller_seq.start(p_sequencer.apb_sqr);
+    idle_target();
+  endtask
+endclass
+
+class i3c_entdaa_dynamic_addr_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_entdaa_dynamic_addr_vseq)
+
+  function new(string name = "i3c_entdaa_dynamic_addr_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_target_txn                       cfg_req;
+    i3c_entdaa_seq                       entdaa_seq;
+    i3c_dynamic_addr_private_write_seq   write_seq;
+    i3c_dynamic_addr_private_read_seq    read_seq;
+
+    // Phase 1: discover the target and assign DA 0x01.
+    cfg_req = i3c_target_txn::type_id::create("entdaa_cfg");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ccc_ack_enable = 1'b1;
+    cfg_req.entdaa_participate = 1'b1;
+    configure_target(cfg_req);
+
+    entdaa_seq = i3c_entdaa_seq::type_id::create("entdaa_seq");
+    entdaa_seq.start(p_sequencer.apb_sqr);
+
+    // Phase 2: the target must now match DA 0x01, not only static address 0x12.
+    cfg_req = i3c_target_txn::type_id::create("dynamic_write_cfg");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ack_addr = 1'b1;
+    cfg_req.i2c_write_ack_count = 2;
+    cfg_req.i3c_write_tbit_mode = 1'b1;
+    configure_target(cfg_req);
+
+    write_seq =
+      i3c_dynamic_addr_private_write_seq::type_id::create("write_seq");
+    write_seq.start(p_sequencer.apb_sqr);
+
+    // Phase 3: read through the same assigned DA and verify the RX FIFO path.
+    cfg_req = i3c_target_txn::type_id::create("dynamic_read_cfg");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ack_addr = 1'b1;
+    cfg_req.read_enable = 1'b1;
+    cfg_req.read_data = new[2];
+    cfg_req.read_data[0] = 8'ha6;
+    cfg_req.read_data[1] = 8'h39;
+    configure_target(cfg_req);
+
+    read_seq =
+      i3c_dynamic_addr_private_read_seq::type_id::create("read_seq");
+    read_seq.start(p_sequencer.apb_sqr);
     idle_target();
   endtask
 endclass

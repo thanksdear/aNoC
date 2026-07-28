@@ -21,6 +21,7 @@ class i3c_seq extends uvm_sequence #(i3c_txn);
   localparam bit [7:0] CCC_GETSTATUS      = 8'h90;
   localparam bit [7:0] CCC_SETDASA        = 8'h87;
   localparam bit [6:0] NEW_DYNAMIC_ADDR   = 7'h22;
+  localparam bit [6:0] ENTDAA_DYNAMIC_ADDR = 7'h01;
   localparam bit [63:0] ENTDAA_ID         = 64'h1234_5678_9abc_de01;
 
   virtual i3c_if vif;
@@ -268,6 +269,40 @@ class i3c_sdr_private_write_seq extends i3c_seq;
     expect_eq("SDR private write response", rdata, 32'h0, 32'h3);
     apb_read(REG_ERR_STATUS, rdata);
     expect_eq("SDR private write ERR_STATUS", rdata, 32'h0, 32'h3);
+  endtask
+endclass
+
+class i3c_sdr_write_parity_error_seq extends i3c_seq;
+  `uvm_object_utils(i3c_sdr_write_parity_error_seq)
+  function new(string name = "i3c_sdr_write_parity_error_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    bit [31:0] rdata;
+
+    cfg_i3c_mode();
+    // 0xA5 has four one bits, so its correct odd-parity T-bit is high.
+    // The target fault injector can therefore corrupt it by pulling SDA low.
+    send_apb(WR, TX_PORT, 32'h0000_00a5);
+    send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd1));
+    wait_status_idle();
+    wait_irq_asserted();
+
+    apb_read(RESP_PORT, rdata);
+    expect_eq("parity-error response", rdata,
+              32'h0000_0001, 32'h0000_0003);
+    apb_read(REG_ERR_STATUS, rdata);
+    expect_eq("parity-error ERR_STATUS set", rdata,
+              32'h0000_0001, 32'h0000_0003);
+    send_apb(WR, REG_ERR_STATUS, 32'h0000_0001);
+    apb_read(REG_ERR_STATUS, rdata);
+    expect_eq("parity-error ERR_STATUS clear", rdata,
+              32'h0000_0000, 32'h0000_0003);
+
+    repeat (2) @(posedge vif.clk);
+    if (vif.irq)
+      `uvm_error("IRQ", "IRQ did not clear after parity-error RESP read")
   endtask
 endclass
 
@@ -574,6 +609,58 @@ class i3c_entdaa_seq extends i3c_seq;
     expect_eq("ENTDAA PID low", rdata, ENTDAA_ID[31:0]);
     apb_read(REG_ENTDAA_PID_HI, rdata);
     expect_eq("ENTDAA PID high", rdata, ENTDAA_ID[63:32]);
+  endtask
+endclass
+
+class i3c_dynamic_addr_private_write_seq extends i3c_seq;
+  `uvm_object_utils(i3c_dynamic_addr_private_write_seq)
+
+  function new(string name = "i3c_dynamic_addr_private_write_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    bit [31:0] rdata;
+
+    cfg_i3c_mode();
+    send_apb(WR, TX_PORT, 32'h0000_00d4);
+    send_apb(WR, TX_PORT, 32'h0000_006b);
+    send_apb(
+      WR,
+      CMD_PORT,
+      private_cmd(ENTDAA_DYNAMIC_ADDR, 1'b0, 8'd2)
+    );
+    wait_status_idle();
+    apb_read(RESP_PORT, rdata);
+    expect_eq("dynamic-address private write response",
+              rdata, 32'h0, 32'h3);
+  endtask
+endclass
+
+class i3c_dynamic_addr_private_read_seq extends i3c_seq;
+  `uvm_object_utils(i3c_dynamic_addr_private_read_seq)
+
+  function new(string name = "i3c_dynamic_addr_private_read_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    bit [31:0] rdata;
+
+    cfg_i3c_mode();
+    send_apb(
+      WR,
+      CMD_PORT,
+      private_cmd(ENTDAA_DYNAMIC_ADDR, 1'b1, 8'd2)
+    );
+    wait_status_idle();
+    apb_read(RESP_PORT, rdata);
+    expect_eq("dynamic-address private read response",
+              rdata, 32'h0, 32'h3);
+    apb_read(RX_PORT, rdata);
+    expect_eq("dynamic-address RX byte0", rdata, 32'ha6, 32'hff);
+    apb_read(RX_PORT, rdata);
+    expect_eq("dynamic-address RX byte1", rdata, 32'h39, 32'hff);
   endtask
 endclass
 

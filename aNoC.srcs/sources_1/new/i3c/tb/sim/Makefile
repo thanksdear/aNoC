@@ -12,6 +12,7 @@ REGRESSION_TESTS ?= \
 	i3c_bus_timing_test \
 	i3c_bus_timing_sweep_test \
 	i3c_sdr_private_write_test \
+	i3c_sdr_write_parity_error_test \
 	i3c_sdr_private_write_len4_test \
 	i3c_cmd_before_tx_test \
 	i3c_private_nack_test \
@@ -25,6 +26,7 @@ REGRESSION_TESTS ?= \
 	i3c_direct_ccc_test \
 	i3c_direct_ccc_write_test \
 	i3c_entdaa_test \
+	i3c_entdaa_dynamic_addr_test \
 	i3c_sw_reset_test \
 	i3c_ibi_no_payload_test \
 	i3c_ibi_payload_test \

@@ -14,6 +14,7 @@ class i3c_target_intent extends uvm_object;
   logic                    direction;    // 0=write, 1=read
   logic                    expect_ack;
   int unsigned             write_ack_count; // legacy I2C data ACKs before NACK
+  int                      write_parity_error_index;
   int unsigned             read_length;  // target 准备发送的有效 byte 数
   logic [7:0]              read_data[$];
   logic                    entdaa_participate;
@@ -27,6 +28,7 @@ class i3c_target_intent extends uvm_object;
     `uvm_field_int(direction, UVM_ALL_ON)
     `uvm_field_int(expect_ack, UVM_ALL_ON)
     `uvm_field_int(write_ack_count, UVM_ALL_ON)
+    `uvm_field_int(write_parity_error_index, UVM_ALL_ON)
     `uvm_field_int(read_length, UVM_ALL_ON)
     `uvm_field_queue_int(read_data, UVM_ALL_ON)
     `uvm_field_int(entdaa_participate, UVM_ALL_ON)
@@ -83,11 +85,14 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
   logic       i2c_read_mode;
   logic       i3c_write_tbit_mode;
   int         write_ack_count;
+  int         write_parity_error_index;
   logic       ccc_ack_enable;
   logic       ccc_direct_enable;
   logic       entdaa_participate;
   logic       expect_ccc_target;
   logic [7:0] read_data[$];
+  logic [6:0] dynamic_addr;
+  logic       dynamic_addr_valid;
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
@@ -103,6 +108,10 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
       `uvm_fatal("TGT", "target driver 拿不到 cfg")
   endfunction
 
+  function logic [6:0] effective_addr();
+    return dynamic_addr_valid ? dynamic_addr : cfg.static_addr;
+  endfunction
+
   task publish_intent(i3c_target_intent_kind_e kind,
                       logic [6:0] expected_addr,
                       logic direction,
@@ -115,6 +124,8 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
     intent.direction = direction;
     intent.expect_ack = expect_ack;
     intent.write_ack_count = direction ? 0 : write_ack_count;
+    intent.write_parity_error_index =
+      direction ? -1 : write_parity_error_index;
     intent.read_length = direction ? read_data.size() : 0;
     intent.entdaa_participate = 1'b0;
     intent.entdaa_id = '0;
@@ -165,6 +176,7 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
     intent.direction = 1'b1;
     intent.expect_ack = participate;
     intent.write_ack_count = 0;
+    intent.write_parity_error_index = -1;
     intent.read_length = 0;
     intent.entdaa_participate = participate;
     intent.entdaa_id = cfg.entdaa_id;
@@ -180,7 +192,10 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
       // A hard reset can arrive while handle_frame() is blocked waiting for an
       // SCL edge.  Run frame handling in a reset epoch so reset immediately
       // aborts the in-flight target task and releases the bus.
-      init_target();
+      // A controller software reset advances tb_reset_epoch without asserting
+      // rst_n.  It aborts the in-flight BFM response but must not erase an
+      // external target's assigned dynamic address.  A hard reset clears it.
+      init_target(vif.rst_n !== 1'b1);
       wait (vif.rst_n === 1'b1);
       target_epoch = vif.tb_reset_epoch;
       fork : target_reset_epoch
@@ -206,9 +221,21 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
     i2c_read_mode = req.i2c_read_mode;
     i3c_write_tbit_mode = req.i3c_write_tbit_mode;
     write_ack_count = req.i2c_write_ack_count;
+    write_parity_error_index = req.write_parity_error_index;
     ccc_ack_enable = req.ccc_ack_enable;
     ccc_direct_enable = req.ccc_direct_enable;
     entdaa_participate = req.entdaa_participate;
+
+    if ((req.write_parity_error_index >= 0) &&
+        (!req.i3c_write_tbit_mode ||
+         (req.write_parity_error_index >= req.i2c_write_ack_count)))
+      `uvm_error(
+        "TGT_CFG",
+        $sformatf(
+          "parity-error byte index %0d requires I3C T-bit mode and write count greater than the index",
+          req.write_parity_error_index
+        )
+      )
 
     if (req.read_data.size() > cfg.max_read_bytes)
       `uvm_error(
@@ -279,23 +306,29 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
 
   task run_phase(uvm_phase phase);
     fork
-      respond_to_bus();
-      process_items();
+      respond_to_bus(); // 监听并响应 I3C 总线。
+      process_items();  // 接收 target sequence 发来的配置/IBI。
     join
   endtask
 
-  task init_target();
+  task init_target(bit clear_dynamic_addr);
     vif.target_drive_low <= 1'b0;
+    vif.target_fault_drive_low <= 1'b0;
     ack_addr = 1'b0;
     read_enable = 1'b0;
     i2c_read_mode = 1'b0;
     i3c_write_tbit_mode = 1'b0;
     write_ack_count = 0;
+    write_parity_error_index = -1;
     ccc_ack_enable = 1'b0;
     ccc_direct_enable = 1'b0;
     entdaa_participate = 1'b0;
     expect_ccc_target = 1'b0;
     read_data.delete();
+    if (clear_dynamic_addr) begin
+      dynamic_addr = '0;
+      dynamic_addr_valid = 1'b0;
+    end
     vif.target_dbg_addr_byte <= 8'h00;
     vif.target_dbg_ccc_byte <= 8'h00;
     vif.target_dbg_write_byte <= 8'h00;
@@ -327,7 +360,9 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
     logic       participate;
     logic       da_valid;
 
-    participate = entdaa_participate;
+    // An already-addressed target is no longer part of the unaddressed
+    // population, even if a stale test configuration still requests ENTDAA.
+    participate = entdaa_participate && !dynamic_addr_valid;
     assigned = 1'b0;
     publish_entdaa_intent(participate);
 
@@ -405,6 +440,10 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
         return;
       end
 
+      // The address becomes active only after this target has accepted the
+      // complete DA/parity byte and ACKed it.
+      dynamic_addr = da_byte[7:1];
+      dynamic_addr_valid = 1'b1;
       assigned = 1'b1;
     end
   endtask
@@ -420,21 +459,22 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
     int unsigned read_length;
 
     vif.target_drive_low <= 1'b0;
+    vif.target_fault_drive_low <= 1'b0;
     vif.target_dbg_matched <= 1'b0;
     vif.target_dbg_ack_phase <= 1'b0;
 
     for (int bit_idx = 7; bit_idx >= 0; bit_idx--) begin
       @(posedge vif.scl_in);
       addr_byte[bit_idx] = vif.sda_in;
-    end
+    end//存地址
     vif.target_dbg_addr_byte <= addr_byte;
 
     if (expect_ccc_target) begin
       expect_ccc_target = 1'b0;
       matched = ack_addr &&
-                (addr_byte[7:1] == cfg.static_addr);
+                (addr_byte[7:1] == effective_addr());
       vif.target_dbg_matched <= matched;
-      publish_intent(TARGET_INTENT_CCC_DIRECT, cfg.static_addr,
+      publish_intent(TARGET_INTENT_CCC_DIRECT, effective_addr(),
                      read_enable, ack_addr);
       @(negedge vif.scl_in);
       vif.target_dbg_ack_phase <= 1'b1;
@@ -444,7 +484,7 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
       @(negedge vif.scl_in);
       vif.target_drive_low <= 1'b0;
       vif.target_dbg_ack_phase <= 1'b0;
-    end else if (addr_byte == 8'hfc) begin
+    end else if (addr_byte == 8'hfc) begin // CCC broadcast write
       matched = ccc_ack_enable;
       vif.target_dbg_matched <= matched;
       publish_intent(TARGET_INTENT_CCC_BCAST, 7'h7e,
@@ -486,9 +526,9 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
       end
     end else begin
       matched = ack_addr &&
-                (addr_byte[7:1] == cfg.static_addr);
+                (addr_byte[7:1] == effective_addr());
       vif.target_dbg_matched <= matched;
-      publish_intent(TARGET_INTENT_PRIVATE, cfg.static_addr,
+      publish_intent(TARGET_INTENT_PRIVATE, effective_addr(),
                      read_enable, ack_addr);
       @(negedge vif.scl_in);
       vif.target_dbg_ack_phase <= 1'b1;
@@ -511,9 +551,22 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
         @(negedge vif.scl_in);
         if (i3c_write_tbit_mode) begin
           // I3C write byte ninth bit is controller-driven odd parity (T).
-          // The target only observes it and must not mask a bad controller T.
+          // Fault injection uses a separate wired-low contribution so it
+          // cannot masquerade as a legal target ACK.
           vif.target_dbg_ack_phase <= 1'b0;
           vif.target_drive_low <= 1'b0;
+          if (byte_idx == write_parity_error_index) begin
+            if ((~^read_byte) !== 1'b1)
+              `uvm_error(
+                "TGT_PARITY_INJECT",
+                $sformatf(
+                  "cannot corrupt byte[%0d]: data 0x%02x already has a low T-bit",
+                  byte_idx, read_byte
+                )
+              )
+            else
+              vif.target_fault_drive_low <= 1'b1;
+          end
         end else begin
           // Legacy I2C write byte ninth bit is target-driven ACK.
           vif.target_dbg_ack_phase <= 1'b1;
@@ -521,6 +574,7 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
         end
         @(posedge vif.scl_in);
         @(negedge vif.scl_in);
+        vif.target_fault_drive_low <= 1'b0;
         vif.target_drive_low <= 1'b0;
         vif.target_dbg_ack_phase <= 1'b0;
       end

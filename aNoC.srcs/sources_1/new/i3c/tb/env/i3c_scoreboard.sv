@@ -280,6 +280,8 @@ class i3c_expected_op extends uvm_sequence_item;
   logic          target_model_direction;
   // legacy I2C 写方向下，target 计划连续 ACK 多少个数据 byte。
   int unsigned   target_write_ack_count;
+  // -1 表示正常 parity；非负值表示该 payload byte 的 T-bit 被故障注入。
+  int            write_parity_error_index;
   // I3C 读方向下，target 实际计划提供多少个数据 byte。
   int unsigned   target_read_length;
 
@@ -309,6 +311,7 @@ class i3c_expected_op extends uvm_sequence_item;
     `uvm_field_int(target_model_addr, UVM_ALL_ON)
     `uvm_field_int(target_model_direction, UVM_ALL_ON)
     `uvm_field_int(target_write_ack_count, UVM_ALL_ON)
+    `uvm_field_int(write_parity_error_index, UVM_ALL_ON)
     `uvm_field_int(target_read_length, UVM_ALL_ON)
     `uvm_field_int(tx_model_complete, UVM_ALL_ON)
     `uvm_field_int(expect_i2c_data_nack, UVM_ALL_ON)
@@ -328,6 +331,7 @@ class i3c_expected_op extends uvm_sequence_item;
     target_model_addr      = 'x;
     target_model_direction = 1'bx;
     target_write_ack_count = 0;
+    write_parity_error_index = -1;
     target_read_length     = 0;
     tx_model_complete      = 1'b1;
     expect_i2c_data_nack   = 1'b0;
@@ -523,6 +527,8 @@ class i3c_cmd_predictor extends uvm_component;
       expected.target_model_addr      = intent.expected_addr;
       expected.target_model_direction = intent.direction;
       expected.target_write_ack_count = intent.write_ack_count;
+      expected.write_parity_error_index =
+        intent.write_parity_error_index;
       if (effective_ack && (intent.direction !== expected.rw))
         `uvm_error(
           "I3C_PRED",
@@ -1131,11 +1137,14 @@ class i3c_bus_scoreboard extends uvm_scoreboard;
     int             data_index,
     logic [7:0]     expected_data,
     bit             i3c_parity,
-    logic           legacy_expected_ninth
+    logic           legacy_expected_ninth,
+    bit             expect_parity_error
   );
     logic expected_ninth;
+    logic correct_ninth;
     logic expected_controller_low;
     logic expected_target_low;
+    logic expected_fault_low;
 
     if (data_index >= segment.data.size())
       return;
@@ -1157,10 +1166,14 @@ class i3c_bus_scoreboard extends uvm_scoreboard;
 
     // I3C 模式用 monitor 采到的实际 byte 计算其应有 parity；数据内容本身已经在
     // 上面的 check_byte() 与 expected_data 独立比较。
-    if (i3c_parity)
-      expected_ninth = ~^segment.data[data_index];
-    else
+    if (i3c_parity) begin
+      correct_ninth = ~^segment.data[data_index];
+      expected_ninth = expect_parity_error ? 1'b0 : correct_ninth;
+    end
+    else begin
+      correct_ninth = legacy_expected_ninth;
       expected_ninth = legacy_expected_ninth;
+    end
     check_logic(
       $sformatf("segment[%0d].ninth[%0d]", segment_index, data_index),
       segment.data_ninth_bits[data_index],
@@ -1169,8 +1182,9 @@ class i3c_bus_scoreboard extends uvm_scoreboard;
 
     // 只看 resolved SDA 的 0/1 无法判断是谁拉低：I3C 可能是 controller 的
     // parity/T，legacy I2C 则可能是 target ACK，所以再检查 TB 记录的驱动归属。
-    expected_controller_low = i3c_parity && !expected_ninth;
+    expected_controller_low = i3c_parity && !correct_ninth;
     expected_target_low     = !i3c_parity && !expected_ninth;
+    expected_fault_low      = i3c_parity && expect_parity_error;
 
     if (data_index >= segment.data_ninth_controller_low.size())
       `uvm_error(
@@ -1198,6 +1212,20 @@ class i3c_bus_scoreboard extends uvm_scoreboard;
                   segment_index, data_index),
         segment.data_ninth_target_low[data_index],
         expected_target_low
+      );
+
+    if (data_index >= segment.data_ninth_fault_low.size())
+      `uvm_error(
+        "I3C_SB",
+        $sformatf("segment[%0d] has no fault-drive sample for data[%0d]",
+                  segment_index, data_index)
+      )
+    else
+      check_logic(
+        $sformatf("segment[%0d].ninth_fault_low[%0d]",
+                  segment_index, data_index),
+        segment.data_ninth_fault_low[data_index],
+        expected_fault_low
       );
   endfunction
 
@@ -1356,7 +1384,8 @@ class i3c_bus_scoreboard extends uvm_scoreboard;
           mode,
           // 仅 legacy I2C 写会使用此参数：最后一个实际发送 byte 预期 NACK。
           !mode && expected.expect_i2c_data_nack &&
-            (i == (expected.write_data.size() - 1))
+            (i == (expected.write_data.size() - 1)),
+          mode && (i == expected.write_parity_error_index)
         );
       end
     end
@@ -1433,7 +1462,9 @@ class i3c_bus_scoreboard extends uvm_scoreboard;
     expected_size = 1 + expected.length;
     check_int("broadcast CCC data size", segment.data.size(), expected_size);
     if (segment.data.size() > 0)
-      check_write_byte(segment, 0, 0, expected.ccc_code, 1'b1, 1'b0);
+      check_write_byte(
+        segment, 0, 0, expected.ccc_code, 1'b1, 1'b0, 1'b0
+      );
     compare_payload(segment, 0, expected, 1, 1'b1);
   endfunction
 
@@ -1480,7 +1511,7 @@ class i3c_bus_scoreboard extends uvm_scoreboard;
     check_int("direct CCC code count", broadcast_segment.data.size(), 1);
     if (broadcast_segment.data.size() > 0)
       check_write_byte(
-        broadcast_segment, 0, 0, expected.ccc_code, 1'b1, 1'b0
+        broadcast_segment, 0, 0, expected.ccc_code, 1'b1, 1'b0, 1'b0
       );
 
     if (actual.segments.size() < 2)
@@ -1554,7 +1585,9 @@ class i3c_bus_scoreboard extends uvm_scoreboard;
 
     check_int("ENTDAA prefix data size", prefix.data.size(), 1);
     if (prefix.data.size() > 0)
-      check_write_byte(prefix, 0, 0, expected.ccc_code, 1'b1, 1'b0);
+      check_write_byte(
+        prefix, 0, 0, expected.ccc_code, 1'b1, 1'b0, 1'b0
+      );
 
     // 正常完整流程的 actual round 数 = 成功分配轮数 + 最后一轮 7E/R NACK。
     // 若 DA ACK 失败，predictor 会关闭 final-NACK 预期，因为流程已经异常终止。

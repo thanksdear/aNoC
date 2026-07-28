@@ -54,6 +54,22 @@ class i3c_sdr_private_write_test extends i3c_base_test;
   endtask
 endclass
 
+class i3c_sdr_write_parity_error_test extends i3c_base_test;
+  `uvm_component_utils(i3c_sdr_write_parity_error_test)
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+  task run_phase(uvm_phase phase);
+    i3c_sdr_write_parity_error_vseq vseq;
+    phase.raise_objection(this);
+    reset_dut();
+    vseq = i3c_sdr_write_parity_error_vseq::type_id::create("vseq");
+    run_virtual_seq(vseq);
+    repeat (20) @(posedge vif.clk);
+    phase.drop_objection(this);
+  endtask
+endclass
+
 class i3c_full_feature_test extends i3c_base_test;
   `uvm_component_utils(i3c_full_feature_test)
   function new(string name, uvm_component parent); super.new(name, parent); endfunction
@@ -82,6 +98,11 @@ class i3c_full_feature_test extends i3c_base_test;
     );
     run_one_virtual(
       i3c_sdr_private_write_vseq::type_id::create("sdr_write_vseq")
+    );
+    run_one_virtual(
+      i3c_sdr_write_parity_error_vseq::type_id::create(
+        "sdr_write_parity_error_vseq"
+      )
     );
     run_one_virtual(
       i3c_sdr_private_write_len4_vseq::type_id::create(
@@ -129,6 +150,11 @@ class i3c_full_feature_test extends i3c_base_test;
       i3c_direct_ccc_write_vseq::type_id::create("direct_ccc_write_vseq")
     );
     run_one_virtual(i3c_entdaa_vseq::type_id::create("entdaa_vseq"));
+    run_one_virtual(
+      i3c_entdaa_dynamic_addr_vseq::type_id::create(
+        "entdaa_dynamic_addr_vseq"
+      )
+    );
     run_one_virtual(i3c_sw_reset_vseq::type_id::create("sw_reset_vseq"));
     run_one_virtual(i3c_irq_access_vseq::type_id::create("irq_vseq"));
     run_one_virtual(
@@ -341,6 +367,26 @@ class i3c_entdaa_test extends i3c_base_test;
     phase.raise_objection(this);
     reset_dut();
     vseq = i3c_entdaa_vseq::type_id::create("vseq");
+    run_virtual_seq(vseq);
+    repeat (20) @(posedge vif.clk);
+    phase.drop_objection(this);
+  endtask
+endclass
+
+class i3c_entdaa_dynamic_addr_test extends i3c_base_test;
+  `uvm_component_utils(i3c_entdaa_dynamic_addr_test)
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  task run_phase(uvm_phase phase);
+    i3c_entdaa_dynamic_addr_vseq vseq;
+
+    phase.raise_objection(this);
+    reset_dut();
+    vseq =
+      i3c_entdaa_dynamic_addr_vseq::type_id::create("vseq");
     run_virtual_seq(vseq);
     repeat (20) @(posedge vif.clk);
     phase.drop_objection(this);

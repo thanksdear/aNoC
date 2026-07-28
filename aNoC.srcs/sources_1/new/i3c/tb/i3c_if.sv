@@ -17,6 +17,9 @@ interface i3c_if (input logic clk);
     // Target model's only electrical contribution to the shared SDA line.
     // Protocol configuration stays inside i3c_target_driver.
     logic        target_drive_low;
+    // Dedicated fault-injection contribution. It is separate from legal
+    // target driving so intentional corruption is not reported as contention.
+    logic        target_fault_drive_low;
 
     // Read-only target observations used by directed synchronization and
     // diagnostics.  These are observations, not target stimulus controls.

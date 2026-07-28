@@ -18,7 +18,7 @@ class i3c_target_agent extends uvm_agent;
     super.build_phase(phase);
     intent_ap = new("intent_ap", this);
     ibi_intent_ap = new("ibi_intent_ap", this);
-
+    //优先使用testbench中配置的cfg，如果没有配置，则使用默认的cfg
     if (!uvm_config_db#(i3c_target_cfg)::get(this, "", "cfg", cfg))
       cfg = i3c_target_cfg::type_id::create("cfg");
     is_active = cfg.is_active;

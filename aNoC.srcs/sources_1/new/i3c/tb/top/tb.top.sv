@@ -12,7 +12,9 @@ module top;
   i3c_if vif (clk);
 
   assign vif.scl_in = vif.scl_oe ? vif.scl_out : 1'b1;
-  assign vif.sda_in = (vif.target_drive_low || (vif.sda_oe && !vif.sda_out)) ? 1'b0 : 1'b1;
+  assign vif.sda_in =
+    (vif.target_drive_low || vif.target_fault_drive_low ||
+     (vif.sda_oe && !vif.sda_out)) ? 1'b0 : 1'b1;
 
   // The simple wired-low resolver would otherwise hide an illegal fight where
   // the controller drives push-pull high while the target pulls SDA low.

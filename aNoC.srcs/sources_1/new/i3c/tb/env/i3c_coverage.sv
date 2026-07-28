@@ -26,7 +26,9 @@ class i3c_coverage extends uvm_subscriber #(i3c_txn);
   bit        is_cmd_s;
   bit        is_ctrl_s;
   bit        is_resp_s;
+  bit        is_err_status_s;
   bit        is_ibi_status_s;
+  bit        parity_error_s;
   bit        cmd_is_ccc_s;
   bit        cmd_is_direct_s;
   bit        cmd_rw_s;
@@ -168,6 +170,12 @@ class i3c_coverage extends uvm_subscriber #(i3c_txn);
       bins hit = {1};
     }
 
+    cp_parity_error: coverpoint parity_error_s
+      iff (is_resp_s || is_err_status_s) {
+      bins clear = {0};
+      bins set   = {1};
+    }
+
     cp_ibi_status_access: coverpoint is_ibi_status_s {
       bins hit = {1};
     }
@@ -190,7 +198,9 @@ class i3c_coverage extends uvm_subscriber #(i3c_txn);
     is_cmd_s = (t.op == WR) && (t.addr == CMD_PORT);
     is_ctrl_s = (t.op == WR) && (t.addr == REG_CTRL);
     is_resp_s = (t.op == RD) && (t.addr == RESP_PORT);
+    is_err_status_s = (t.op == RD) && (t.addr == REG_ERR_STATUS);
     is_ibi_status_s = (t.addr == REG_IBI_STATUS);
+    parity_error_s = t.data[0];
 
     cmd_len_s = t.data[31:24];
     cmd_rw_s = t.data[16];
@@ -208,7 +218,7 @@ class i3c_coverage extends uvm_subscriber #(i3c_txn);
       cg_ctrl.sample();
     if (is_cmd_s)
       cg_cmd.sample();
-    if (is_resp_s || is_ibi_status_s)
+    if (is_resp_s || is_err_status_s || is_ibi_status_s)
       cg_status.sample();
   endfunction
 
@@ -268,12 +278,14 @@ class i3c_bus_coverage extends uvm_subscriber #(i3c_bus_txn);
   i3c_bus_boundary_e   end_boundary_s;
   int unsigned         payload_len_s;
   bit                  header_complete_s;
+  logic [6:0]          segment_addr_s;
   logic                addr_ninth_s;
   ninth_count_status_e ninth_count_status_s;
 
   logic                data_ninth_s;
   logic                data_ninth_controller_low_s;
   logic                data_ninth_target_low_s;
+  logic                data_ninth_fault_low_s;
 
   int unsigned         ibi_mdb_count_s;
   logic                ibi_header_ninth_s;
@@ -416,6 +428,13 @@ class i3c_bus_coverage extends uvm_subscriber #(i3c_bus_txn);
       bins seg_header_complete   = {1};
     }
 
+    cp_addr: coverpoint segment_addr_s iff (header_complete_s) {
+      bins static_addr         = {7'h12};
+      bins entdaa_dynamic_addr = {7'h01};
+      bins broadcast_addr      = {7'h7e};
+      bins other_addr          = default;
+    }
+
     // The sampled value is deliberately raw.  Low/high are ACK/NACK only for
     // address headers; this coverpoint does not infer data T-bit correctness.
     cp_addr_ninth: coverpoint addr_ninth_s iff (header_complete_s) {
@@ -493,6 +512,11 @@ class i3c_bus_coverage extends uvm_subscriber #(i3c_bus_txn);
     // Hits distinguish ordinary continuation, controller-only early end,
     // target-only End-of-Data, and the equal-length case where both pull low.
     x_read_t_drivers: cross cp_read_controller_low, cp_read_target_low;
+
+    cp_fault_low: coverpoint data_ninth_fault_low_s {
+      bins not_injected = {1'b0};
+      bins injected     = {1'b1};
+    }
 
     x_kind_data_ninth: cross cp_kind, cp_raw_ninth {
       ignore_bins unknown_kind = binsof(cp_kind.d9_kind_unknown);
@@ -674,6 +698,7 @@ class i3c_bus_coverage extends uvm_subscriber #(i3c_bus_txn);
         end_boundary_s    = t.segments[i].end_boundary;
         payload_len_s     = t.segments[i].data.size();
         header_complete_s = t.segments[i].header_complete;
+        segment_addr_s    = t.segments[i].addr;
         addr_ninth_s      = t.segments[i].addr_ninth;
 
         if ((t.segments[i].data.size() == 0) &&
@@ -701,6 +726,11 @@ class i3c_bus_coverage extends uvm_subscriber #(i3c_bus_txn);
             data_ninth_target_low_s = t.segments[i].data_ninth_target_low[j];
           else
             data_ninth_target_low_s = 1'bx;
+          if (j < t.segments[i].data_ninth_fault_low.size())
+            data_ninth_fault_low_s =
+              t.segments[i].data_ninth_fault_low[j];
+          else
+            data_ninth_fault_low_s = 1'bx;
           cg_data_ninth.sample();
         end
       end
