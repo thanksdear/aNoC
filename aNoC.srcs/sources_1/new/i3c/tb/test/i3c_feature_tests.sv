@@ -350,10 +350,20 @@ class i3c_direct_ccc_write_test extends i3c_base_test;
   function new(string name, uvm_component parent); super.new(name, parent); endfunction
   task run_phase(uvm_phase phase);
     i3c_direct_ccc_write_vseq vseq;
+    i3c_irq_access_vseq       hard_reset_static_vseq;
     phase.raise_objection(this);
     reset_dut();
     vseq = i3c_direct_ccc_write_vseq::type_id::create("vseq");
     run_virtual_seq(vseq);
+
+    // SETDASA survives controller software reset, but a hard reset returns
+    // this target model to its static address. A successful 0x12 access proves
+    // the previous dynamic 0x22 assignment was cleared.
+    reset_dut();
+    hard_reset_static_vseq =
+      i3c_irq_access_vseq::type_id::create("hard_reset_static_vseq");
+    run_virtual_seq(hard_reset_static_vseq);
+
     repeat (20) @(posedge vif.clk);
     phase.drop_objection(this);
   endtask

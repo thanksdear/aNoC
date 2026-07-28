@@ -560,6 +560,110 @@ class i3c_direct_ccc_write_seq extends i3c_seq;
   endtask
 endclass
 
+class i3c_setdasa_private_write_seq extends i3c_seq;
+  `uvm_object_utils(i3c_setdasa_private_write_seq)
+  function new(string name = "i3c_setdasa_private_write_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    bit [31:0] rdata;
+
+    cfg_i3c_mode();
+    send_apb(WR, TX_PORT, 32'h0000_00b4);
+    send_apb(WR, TX_PORT, 32'h0000_004b);
+    send_apb(
+      WR,
+      CMD_PORT,
+      private_cmd(NEW_DYNAMIC_ADDR, 1'b0, 8'd2)
+    );
+    wait_status_idle();
+    apb_read(RESP_PORT, rdata);
+  endtask
+endclass
+
+class i3c_setdasa_private_read_seq extends i3c_seq;
+  `uvm_object_utils(i3c_setdasa_private_read_seq)
+  function new(string name = "i3c_setdasa_private_read_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    bit [31:0] rdata;
+
+    cfg_i3c_mode();
+    send_apb(
+      WR,
+      CMD_PORT,
+      private_cmd(NEW_DYNAMIC_ADDR, 1'b1, 8'd2)
+    );
+    wait_status_idle();
+    apb_read(RESP_PORT, rdata);
+    apb_read(RX_PORT, rdata);
+    expect_eq("SETDASA dynamic RX byte0", rdata, 32'h7c, 32'hff);
+    apb_read(RX_PORT, rdata);
+    expect_eq("SETDASA dynamic RX byte1", rdata, 32'hc7, 32'hff);
+  endtask
+endclass
+
+class i3c_setdasa_old_static_nack_seq extends i3c_seq;
+  `uvm_object_utils(i3c_setdasa_old_static_nack_seq)
+  function new(string name = "i3c_setdasa_old_static_nack_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    bit [31:0] rdata;
+
+    cfg_i3c_mode();
+    send_apb(
+      WR,
+      CMD_PORT,
+      private_cmd(SLAVE_ADDR, 1'b0, 8'd0)
+    );
+    wait_status_idle();
+    wait_irq_asserted();
+    apb_read(RESP_PORT, rdata);
+    apb_read(REG_ERR_STATUS, rdata);
+    send_apb(WR, REG_ERR_STATUS, 32'h0000_0002);
+    apb_read(REG_ERR_STATUS, rdata);
+  endtask
+endclass
+
+class i3c_setdasa_sw_reset_preserve_seq extends i3c_seq;
+  `uvm_object_utils(i3c_setdasa_sw_reset_preserve_seq)
+  uvm_event post_reset_target_ready;
+  uvm_event post_reset_target_configured;
+
+  function new(string name = "i3c_setdasa_sw_reset_preserve_seq");
+    super.new(name);
+    post_reset_target_ready = new("post_reset_target_ready");
+    post_reset_target_configured =
+      new("post_reset_target_configured");
+  endfunction
+
+  task body();
+    bit [31:0] rdata;
+
+    send_apb(WR, REG_CTRL, 32'h0000_0007);
+    repeat (2) @(posedge vif.clk);
+    post_reset_target_ready.trigger();
+    post_reset_target_configured.wait_on();
+    repeat (3) @(posedge vif.clk);
+
+    // A successful transfer after controller-only reset proves the external
+    // target retained the dynamic address assigned by SETDASA.
+    send_apb(WR, TX_PORT, 32'h0000_0069);
+    send_apb(
+      WR,
+      CMD_PORT,
+      private_cmd(NEW_DYNAMIC_ADDR, 1'b0, 8'd1)
+    );
+    wait_status_idle();
+    apb_read(RESP_PORT, rdata);
+  endtask
+endclass
+
 class i3c_entdaa_seq extends i3c_seq;
   `uvm_object_utils(i3c_entdaa_seq)
   function new(string name = "i3c_entdaa_seq"); super.new(name); endfunction

@@ -71,6 +71,7 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
   `uvm_component_utils(i3c_target_driver)
 
   localparam logic [7:0] CCC_ENTDAA = 8'h07;
+  localparam logic [7:0] CCC_SETDASA = 8'h87;
 
   virtual i3c_if vif;
   i3c_target_cfg cfg;
@@ -90,6 +91,7 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
   logic       ccc_direct_enable;
   logic       entdaa_participate;
   logic       expect_ccc_target;
+  logic [7:0] pending_direct_ccc_code;
   logic [7:0] read_data[$];
   logic [6:0] dynamic_addr;
   logic       dynamic_addr_valid;
@@ -324,6 +326,7 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
     ccc_direct_enable = 1'b0;
     entdaa_participate = 1'b0;
     expect_ccc_target = 1'b0;
+    pending_direct_ccc_code = 8'h00;
     read_data.delete();
     if (clear_dynamic_addr) begin
       dynamic_addr = '0;
@@ -455,6 +458,10 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
     logic       matched;
     logic       cont;
     logic       target_more;
+    logic       direct_target_frame;
+    logic [7:0] active_direct_ccc_code;
+    logic       write_parity_valid;
+    logic       observed_ninth;
     int         byte_idx;
     int unsigned read_length;
 
@@ -462,6 +469,9 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
     vif.target_fault_drive_low <= 1'b0;
     vif.target_dbg_matched <= 1'b0;
     vif.target_dbg_ack_phase <= 1'b0;
+    direct_target_frame = 1'b0;
+    active_direct_ccc_code = 8'h00;
+    write_parity_valid = 1'b1;
 
     for (int bit_idx = 7; bit_idx >= 0; bit_idx--) begin
       @(posedge vif.scl_in);
@@ -471,6 +481,9 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
 
     if (expect_ccc_target) begin
       expect_ccc_target = 1'b0;
+      direct_target_frame = 1'b1;
+      active_direct_ccc_code = pending_direct_ccc_code;
+      pending_direct_ccc_code = 8'h00;
       matched = ack_addr &&
                 (addr_byte[7:1] == effective_addr());
       vif.target_dbg_matched <= matched;
@@ -516,6 +529,7 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
       if (ccc_direct_enable) begin
         // Return before the controller creates Sr so run_phase can recognize
         // the following target-address START and ACK that address normally.
+        pending_direct_ccc_code = ccc_byte;
         expect_ccc_target = 1'b1;
         return;
       end else begin
@@ -573,10 +587,55 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
           vif.target_drive_low <= 1'b1;
         end
         @(posedge vif.scl_in);
+        observed_ninth = vif.sda_in;
+        if (i3c_write_tbit_mode) begin
+          if (byte_idx == write_parity_error_index) begin
+            write_parity_valid = 1'b0;
+            if (observed_ninth !== 1'b0)
+              `uvm_error(
+                "TGT_WRITE_PARITY",
+                "configured parity fault did not force the observed T-bit low"
+              )
+          end
+          else if (observed_ninth !== (~^read_byte)) begin
+            write_parity_valid = 1'b0;
+            `uvm_error(
+              "TGT_WRITE_PARITY",
+              $sformatf(
+                "write byte[%0d] data=0x%02h has T=%b, expected %b",
+                byte_idx, read_byte, observed_ninth, ~^read_byte
+              )
+            )
+          end
+        end
         @(negedge vif.scl_in);
         vif.target_fault_drive_low <= 1'b0;
         vif.target_drive_low <= 1'b0;
         vif.target_dbg_ack_phase <= 1'b0;
+      end
+
+      if (direct_target_frame &&
+          (active_direct_ccc_code == CCC_SETDASA)) begin
+        if ((write_ack_count != 1) || !write_parity_valid ||
+            (read_byte[0] !== 1'b0) ||
+            (read_byte[7:1] inside {7'h00, 7'h7e, 7'h7f})) begin
+          `uvm_error(
+            "TGT_SETDASA",
+            $sformatf(
+              "SETDASA rejected: payload=0x%02h count=%0d parity_valid=%0b",
+              read_byte, write_ack_count, write_parity_valid
+            )
+          )
+        end
+        else begin
+          dynamic_addr = read_byte[7:1];
+          dynamic_addr_valid = 1'b1;
+          `uvm_info(
+            "TGT_SETDASA",
+            $sformatf("dynamic address committed: 0x%02h", dynamic_addr),
+            UVM_LOW
+          )
+        end
       end
       return;
     end

@@ -375,9 +375,14 @@ class i3c_direct_ccc_write_vseq extends i3c_virtual_seq;
   endfunction
 
   task body();
-    i3c_target_txn          cfg_req;
-    i3c_direct_ccc_write_seq controller_seq;
+    i3c_target_txn                         cfg_req;
+    i3c_direct_ccc_write_seq               setdasa_seq;
+    i3c_setdasa_private_write_seq          write_seq;
+    i3c_setdasa_private_read_seq           read_seq;
+    i3c_setdasa_old_static_nack_seq        old_addr_seq;
+    i3c_setdasa_sw_reset_preserve_seq      reset_seq;
 
+    // Phase 1: address the target by its static address and assign DA 0x22.
     cfg_req = i3c_target_txn::type_id::create("cfg_req");
     cfg_req.op = I3C_TARGET_CONFIG;
     cfg_req.ack_addr = 1'b1;
@@ -387,9 +392,66 @@ class i3c_direct_ccc_write_vseq extends i3c_virtual_seq;
     cfg_req.ccc_direct_enable = 1'b1;
     configure_target(cfg_req);
 
-    controller_seq =
+    setdasa_seq =
       i3c_direct_ccc_write_seq::type_id::create("controller_seq");
-    controller_seq.start(p_sequencer.apb_sqr);
+    setdasa_seq.start(p_sequencer.apb_sqr);
+
+    // Phase 2: the new dynamic address accepts private write traffic.
+    cfg_req = i3c_target_txn::type_id::create("dynamic_write_cfg");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ack_addr = 1'b1;
+    cfg_req.i2c_write_ack_count = 2;
+    cfg_req.i3c_write_tbit_mode = 1'b1;
+    configure_target(cfg_req);
+
+    write_seq =
+      i3c_setdasa_private_write_seq::type_id::create("write_seq");
+    write_seq.start(p_sequencer.apb_sqr);
+
+    // Phase 3: the same address accepts private read traffic.
+    cfg_req = i3c_target_txn::type_id::create("dynamic_read_cfg");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ack_addr = 1'b1;
+    cfg_req.read_enable = 1'b1;
+    cfg_req.read_data = new[2];
+    cfg_req.read_data[0] = 8'h7c;
+    cfg_req.read_data[1] = 8'hc7;
+    configure_target(cfg_req);
+
+    read_seq =
+      i3c_setdasa_private_read_seq::type_id::create("read_seq");
+    read_seq.start(p_sequencer.apb_sqr);
+
+    // Phase 4: once DA is valid, the old static address no longer matches.
+    cfg_req = i3c_target_txn::type_id::create("old_static_cfg");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ack_addr = 1'b1;
+    configure_target(cfg_req);
+
+    old_addr_seq =
+      i3c_setdasa_old_static_nack_seq::type_id::create("old_addr_seq");
+    old_addr_seq.start(p_sequencer.apb_sqr);
+
+    // Phase 5: controller software reset must not reset an external target's
+    // assigned dynamic address. Reconfigure only the target BFM response policy.
+    reset_seq =
+      i3c_setdasa_sw_reset_preserve_seq::type_id::create("reset_seq");
+    fork
+      reset_seq.start(p_sequencer.apb_sqr);
+      begin
+        i3c_target_txn post_reset_cfg;
+        reset_seq.post_reset_target_ready.wait_on();
+        post_reset_cfg =
+          i3c_target_txn::type_id::create("post_reset_cfg");
+        post_reset_cfg.op = I3C_TARGET_CONFIG;
+        post_reset_cfg.ack_addr = 1'b1;
+        post_reset_cfg.i2c_write_ack_count = 1;
+        post_reset_cfg.i3c_write_tbit_mode = 1'b1;
+        configure_target(post_reset_cfg);
+        reset_seq.post_reset_target_configured.trigger();
+      end
+    join
+
     idle_target();
   endtask
 endclass

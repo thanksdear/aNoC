@@ -18,6 +18,7 @@ class i3c_coverage extends uvm_subscriber #(i3c_txn);
   localparam bit [7:0] CCC_ENEC           = 8'h00;
   localparam bit [7:0] CCC_ENTDAA         = 8'h07;
   localparam bit [7:0] CCC_GETSTATUS      = 8'h90;
+  localparam bit [7:0] CCC_SETDASA        = 8'h87;
 
   op_e       op_s;
   bit [7:0]  addr_s;
@@ -144,6 +145,7 @@ class i3c_coverage extends uvm_subscriber #(i3c_txn);
       bins enec      = {CCC_ENEC};
       bins entdaa    = {CCC_ENTDAA};
       bins getstatus = {CCC_GETSTATUS};
+      bins setdasa   = {CCC_SETDASA};
       bins others    = default;
     }
 
@@ -431,6 +433,7 @@ class i3c_bus_coverage extends uvm_subscriber #(i3c_bus_txn);
     cp_addr: coverpoint segment_addr_s iff (header_complete_s) {
       bins static_addr         = {7'h12};
       bins entdaa_dynamic_addr = {7'h01};
+      bins setdasa_dynamic_addr = {7'h22};
       bins broadcast_addr      = {7'h7e};
       bins other_addr          = default;
     }
