@@ -15,6 +15,7 @@
 ../../rtl/i3c_top.sv
 // 2. 接口
 ../i3c_if.sv
+../i3c_protocol_sva.sv
 // 3. 验证环境包
 ../i3c_pkg.sv
 // 4. 顶层
