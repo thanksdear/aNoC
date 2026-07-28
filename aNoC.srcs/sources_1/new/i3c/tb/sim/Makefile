@@ -14,6 +14,7 @@ REGRESSION_TESTS ?= \
 	i3c_sdr_private_write_test \
 	i3c_sdr_write_parity_error_test \
 	i3c_sdr_private_write_len4_test \
+	i3c_command_error_recovery_test \
 	i3c_cmd_before_tx_test \
 	i3c_private_nack_test \
 	i3c_sdr_private_read_test \

@@ -488,7 +488,7 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
                 (addr_byte[7:1] == effective_addr());
       vif.target_dbg_matched <= matched;
       publish_intent(TARGET_INTENT_CCC_DIRECT, effective_addr(),
-                     read_enable, ack_addr);
+                     addr_byte[0], ack_addr);
       @(negedge vif.scl_in);
       vif.target_dbg_ack_phase <= 1'b1;
       if (matched)
@@ -543,7 +543,7 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
                 (addr_byte[7:1] == effective_addr());
       vif.target_dbg_matched <= matched;
       publish_intent(TARGET_INTENT_PRIVATE, effective_addr(),
-                     read_enable, ack_addr);
+                     addr_byte[0], ack_addr);
       @(negedge vif.scl_in);
       vif.target_dbg_ack_phase <= 1'b1;
       if (matched)

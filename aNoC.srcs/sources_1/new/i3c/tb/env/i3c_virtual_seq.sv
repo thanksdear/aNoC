@@ -135,6 +135,66 @@ class i3c_sdr_private_write_len4_vseq extends i3c_virtual_seq;
   endtask
 endclass
 
+class i3c_command_error_recovery_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_command_error_recovery_vseq)
+
+  function new(string name = "i3c_command_error_recovery_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_target_txn                  cfg_req;
+    i3c_back_to_back_write_seq      queued_write_seq;
+    i3c_queued_nack_recovery_seq    nack_recovery_seq;
+    i3c_queued_parity_recovery_seq  parity_recovery_seq;
+
+    // Two queued successful commands exercise command/TX/response ordering.
+    cfg_req = i3c_target_txn::type_id::create("queued_write_cfg");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ack_addr = 1'b1;
+    cfg_req.i2c_write_ack_count = 1;
+    cfg_req.i3c_write_tbit_mode = 1'b1;
+    configure_target(cfg_req);
+    queued_write_seq =
+      i3c_back_to_back_write_seq::type_id::create("queued_write_seq");
+    queued_write_seq.start(p_sequencer.apb_sqr);
+
+    // Queue a wrong-address command followed by a valid command. The target
+    // uses the same policy for both; only the observed address changes ACK.
+    cfg_req = i3c_target_txn::type_id::create("nack_recovery_cfg");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ack_addr = 1'b1;
+    configure_target(cfg_req);
+    nack_recovery_seq =
+      i3c_queued_nack_recovery_seq::type_id::create(
+        "nack_recovery_seq"
+      );
+    nack_recovery_seq.start(p_sequencer.apb_sqr);
+
+    // Queue a parity-fault write followed by a normal read. A single target
+    // policy supports both directions, so no reconfiguration or reset occurs
+    // between the two controller commands.
+    cfg_req = i3c_target_txn::type_id::create("parity_recovery_cfg");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ack_addr = 1'b1;
+    cfg_req.read_enable = 1'b1;
+    cfg_req.i2c_write_ack_count = 1;
+    cfg_req.i3c_write_tbit_mode = 1'b1;
+    cfg_req.write_parity_error_index = 0;
+    cfg_req.read_data = new[2];
+    cfg_req.read_data[0] = 8'hde;
+    cfg_req.read_data[1] = 8'had;
+    configure_target(cfg_req);
+    parity_recovery_seq =
+      i3c_queued_parity_recovery_seq::type_id::create(
+        "parity_recovery_seq"
+      );
+    parity_recovery_seq.start(p_sequencer.apb_sqr);
+
+    idle_target();
+  endtask
+endclass
+
 class i3c_target_agent_private_nack_vseq extends i3c_virtual_seq;
   `uvm_object_utils(i3c_target_agent_private_nack_vseq)
 

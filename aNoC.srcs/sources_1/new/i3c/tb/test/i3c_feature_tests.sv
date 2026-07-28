@@ -110,6 +110,11 @@ class i3c_full_feature_test extends i3c_base_test;
       )
     );
     run_one_virtual(
+      i3c_command_error_recovery_vseq::type_id::create(
+        "command_error_recovery_vseq"
+      )
+    );
+    run_one_virtual(
       i3c_target_agent_cmd_before_tx_vseq::type_id::create(
         "cmd_before_tx_vseq"
       )
@@ -206,6 +211,25 @@ class i3c_sdr_private_write_len4_test extends i3c_base_test;
     phase.raise_objection(this);
     reset_dut();
     vseq = i3c_sdr_private_write_len4_vseq::type_id::create("vseq");
+    run_virtual_seq(vseq);
+    repeat (20) @(posedge vif.clk);
+    phase.drop_objection(this);
+  endtask
+endclass
+
+class i3c_command_error_recovery_test extends i3c_base_test;
+  `uvm_component_utils(i3c_command_error_recovery_test)
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  task run_phase(uvm_phase phase);
+    i3c_command_error_recovery_vseq vseq;
+
+    phase.raise_objection(this);
+    reset_dut();
+    vseq =
+      i3c_command_error_recovery_vseq::type_id::create("vseq");
     run_virtual_seq(vseq);
     repeat (20) @(posedge vif.clk);
     phase.drop_objection(this);

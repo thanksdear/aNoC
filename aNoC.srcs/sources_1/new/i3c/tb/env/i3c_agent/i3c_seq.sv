@@ -309,6 +309,153 @@ class i3c_sdr_private_write_len4_seq extends i3c_seq;
   endtask
 endclass
 
+class i3c_back_to_back_write_seq extends i3c_seq;
+  `uvm_object_utils(i3c_back_to_back_write_seq)
+  function new(string name = "i3c_back_to_back_write_seq");
+    super.new(name);
+  endfunction
+
+  task wait_target_write_byte(logic [7:0] expected);
+    for (int timeout = 0; timeout < 4000; timeout++) begin
+      if (vif.target_dbg_write_byte === expected)
+        return;
+      @(posedge vif.clk);
+    end
+    `uvm_error(
+      "TIMEOUT",
+      $sformatf("queued write byte 0x%02h was not observed", expected)
+    )
+  endtask
+
+  task body();
+    bit [31:0] rdata;
+
+    cfg_i3c_mode();
+
+    // Queue two complete commands before servicing either response. Distinct
+    // payloads expose TX/command ownership swaps or stale scheduler state.
+    send_apb(WR, TX_PORT, 32'h0000_00a1);
+    send_apb(
+      WR,
+      CMD_PORT,
+      private_cmd(SLAVE_ADDR, 1'b0, 8'd1)
+    );
+    send_apb(WR, TX_PORT, 32'h0000_00b2);
+    send_apb(
+      WR,
+      CMD_PORT,
+      private_cmd(SLAVE_ADDR, 1'b0, 8'd1)
+    );
+
+    wait_target_write_byte(8'hb2);
+    wait_status_idle();
+    apb_read(RESP_PORT, rdata);
+    apb_read(RESP_PORT, rdata);
+    apb_read(REG_ERR_STATUS, rdata);
+  endtask
+endclass
+
+class i3c_queued_nack_recovery_seq extends i3c_seq;
+  `uvm_object_utils(i3c_queued_nack_recovery_seq)
+  function new(string name = "i3c_queued_nack_recovery_seq");
+    super.new(name);
+  endfunction
+
+  task wait_target_header(logic [7:0] expected);
+    for (int timeout = 0; timeout < 4000; timeout++) begin
+      if (vif.target_dbg_addr_byte === expected)
+        return;
+      @(posedge vif.clk);
+    end
+    `uvm_error(
+      "TIMEOUT",
+      $sformatf("queued address header 0x%02h was not observed", expected)
+    )
+  endtask
+
+  task body();
+    bit [31:0] rdata;
+    bit [6:0]  wrong_addr;
+
+    wrong_addr = SLAVE_ADDR + 7'd1;
+    cfg_i3c_mode();
+
+    // First command NACKs because the address is wrong. The second command is
+    // already queued and must still execute successfully without reset.
+    send_apb(
+      WR,
+      CMD_PORT,
+      private_cmd(wrong_addr, 1'b0, 8'd0)
+    );
+    send_apb(
+      WR,
+      CMD_PORT,
+      private_cmd(SLAVE_ADDR, 1'b0, 8'd0)
+    );
+
+    wait_target_header({wrong_addr, 1'b0});
+    wait_target_header({SLAVE_ADDR, 1'b0});
+    wait_status_idle();
+
+    // Distinct expected values 2 then 0 make response reordering observable.
+    apb_read(RESP_PORT, rdata);
+    apb_read(RESP_PORT, rdata);
+    apb_read(REG_ERR_STATUS, rdata);
+    send_apb(WR, REG_ERR_STATUS, 32'h0000_0002);
+    apb_read(REG_ERR_STATUS, rdata);
+  endtask
+endclass
+
+class i3c_queued_parity_recovery_seq extends i3c_seq;
+  `uvm_object_utils(i3c_queued_parity_recovery_seq)
+  function new(string name = "i3c_queued_parity_recovery_seq");
+    super.new(name);
+  endfunction
+
+  task wait_target_header(logic [7:0] expected);
+    for (int timeout = 0; timeout < 4000; timeout++) begin
+      if (vif.target_dbg_addr_byte === expected)
+        return;
+      @(posedge vif.clk);
+    end
+    `uvm_error(
+      "TIMEOUT",
+      $sformatf("queued address header 0x%02h was not observed", expected)
+    )
+  endtask
+
+  task body();
+    bit [31:0] rdata;
+
+    cfg_i3c_mode();
+    send_apb(WR, TX_PORT, 32'h0000_00a5);
+    send_apb(
+      WR,
+      CMD_PORT,
+      private_cmd(SLAVE_ADDR, 1'b0, 8'd1)
+    );
+    send_apb(
+      WR,
+      CMD_PORT,
+      private_cmd(SLAVE_ADDR, 1'b1, 8'd2)
+    );
+
+    wait_target_header({SLAVE_ADDR, 1'b1});
+    wait_status_idle();
+
+    // Distinct expected values 1 then 0 verify parity state is command-local.
+    apb_read(RESP_PORT, rdata);
+    apb_read(RESP_PORT, rdata);
+    apb_read(REG_ERR_STATUS, rdata);
+    send_apb(WR, REG_ERR_STATUS, 32'h0000_0001);
+    apb_read(REG_ERR_STATUS, rdata);
+    apb_read(RX_PORT, rdata);
+    expect_eq("queued recovery RX byte0", rdata, 32'hde, 32'hff);
+    apb_read(RX_PORT, rdata);
+    expect_eq("queued recovery RX byte1", rdata, 32'had, 32'hff);
+  endtask
+endclass
+
 // APB/controller half of the target-agent smoke scenario.  Unlike the legacy
 // feature sequences, this sequence never writes target sideband signals; its
 // peer behavior must arrive through env.tgt.sqr.
