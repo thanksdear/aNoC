@@ -162,6 +162,16 @@ class i3c_full_feature_test extends i3c_base_test;
       i3c_direct_ccc_vseq::type_id::create("direct_ccc_vseq")
     );
     run_one_virtual(
+      i3c_direct_ccc_read_len2_vseq::type_id::create(
+        "direct_ccc_read_len2_vseq"
+      )
+    );
+    run_one_virtual(
+      i3c_direct_ccc_read_short_vseq::type_id::create(
+        "direct_ccc_read_short_vseq"
+      )
+    );
+    run_one_virtual(
       i3c_direct_ccc_nack_vseq::type_id::create(
         "direct_ccc_nack_vseq"
       )
@@ -414,6 +424,42 @@ class i3c_direct_ccc_test extends i3c_base_test;
     phase.raise_objection(this);
     reset_dut();
     vseq = i3c_direct_ccc_vseq::type_id::create("vseq");
+    run_virtual_seq(vseq);
+    repeat (20) @(posedge vif.clk);
+    phase.drop_objection(this);
+  endtask
+endclass
+
+class i3c_direct_ccc_read_len2_test extends i3c_base_test;
+  `uvm_component_utils(i3c_direct_ccc_read_len2_test)
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  task run_phase(uvm_phase phase);
+    i3c_direct_ccc_read_len2_vseq vseq;
+
+    phase.raise_objection(this);
+    reset_dut();
+    vseq = i3c_direct_ccc_read_len2_vseq::type_id::create("vseq");
+    run_virtual_seq(vseq);
+    repeat (20) @(posedge vif.clk);
+    phase.drop_objection(this);
+  endtask
+endclass
+
+class i3c_direct_ccc_read_short_test extends i3c_base_test;
+  `uvm_component_utils(i3c_direct_ccc_read_short_test)
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  task run_phase(uvm_phase phase);
+    i3c_direct_ccc_read_short_vseq vseq;
+
+    phase.raise_objection(this);
+    reset_dut();
+    vseq = i3c_direct_ccc_read_short_vseq::type_id::create("vseq");
     run_virtual_seq(vseq);
     repeat (20) @(posedge vif.clk);
     phase.drop_objection(this);

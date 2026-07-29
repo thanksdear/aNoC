@@ -27,6 +27,8 @@ REGRESSION_TESTS ?= \
 	i3c_broadcast_ccc_nack_test \
 	i3c_broadcast_ccc_payload_test \
 	i3c_direct_ccc_test \
+	i3c_direct_ccc_read_len2_test \
+	i3c_direct_ccc_read_short_test \
 	i3c_direct_ccc_nack_test \
 	i3c_direct_ccc_write_test \
 	i3c_entdaa_test \

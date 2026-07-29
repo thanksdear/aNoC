@@ -18,6 +18,7 @@ class i3c_seq extends uvm_sequence #(i3c_txn);
   localparam bit [6:0] SLAVE_ADDR         = 7'h12;
   localparam bit [7:0] CCC_ENEC           = 8'h00;
   localparam bit [7:0] CCC_ENTDAA         = 8'h07;
+  localparam bit [7:0] CCC_SETMWL         = 8'h09;
   localparam bit [7:0] CCC_GETSTATUS      = 8'h90;
   localparam bit [7:0] CCC_SETDASA        = 8'h87;
   localparam bit [6:0] NEW_DYNAMIC_ADDR   = 7'h22;
@@ -701,18 +702,33 @@ class i3c_broadcast_ccc_payload_seq extends i3c_seq;
     super.new(name);
   endfunction
 
+  task wait_target_ccc_code(logic [7:0] expected);
+    for (int timeout = 0; timeout < 4000; timeout++) begin
+      if (vif.target_dbg_ccc_byte === expected)
+        return;
+      @(posedge vif.clk);
+    end
+    `uvm_error(
+      "TIMEOUT",
+      $sformatf("broadcast CCC code 0x%02h was not observed", expected)
+    )
+  endtask
+
   task body();
     bit [31:0] rdata;
 
     cfg_i3c_mode();
-    // ENEC uses one defining byte here, exercising
-    // S_CCC_CODE -> S_DATA_TX -> S_STOP.
-    send_apb(WR, TX_PORT, 32'h0000_00a5);
+    // SETMWL has a two-byte defining payload. Queue the command first, then
+    // deliberately hold TX empty so the CCC handler must wait in S_DATA_TX.
     send_apb(
       WR,
       CMD_PORT,
-      ccc_cmd(1'b0, CCC_ENEC, 7'h00, 1'b0, 8'd1)
+      ccc_cmd(1'b0, CCC_SETMWL, 7'h00, 1'b0, 8'd2)
     );
+    wait_target_ccc_code(CCC_SETMWL);
+    repeat (16) @(posedge vif.clk);
+    send_apb(WR, TX_PORT, 32'h0000_00a5);
+    send_apb(WR, TX_PORT, 32'h0000_005a);
     wait_status_idle();
     apb_read(RESP_PORT, rdata);
   endtask
@@ -729,6 +745,52 @@ class i3c_direct_ccc_seq extends i3c_seq;
     apb_read(RESP_PORT, rdata);
     apb_read(RX_PORT, rdata);
     expect_eq("direct CCC RX byte0", rdata, 32'h55, 32'hff);
+  endtask
+endclass
+
+class i3c_direct_ccc_read_len2_seq extends i3c_seq;
+  `uvm_object_utils(i3c_direct_ccc_read_len2_seq)
+  function new(string name = "i3c_direct_ccc_read_len2_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    bit [31:0] rdata;
+
+    cfg_i3c_mode();
+    send_apb(
+      WR,
+      CMD_PORT,
+      ccc_cmd(1'b1, CCC_GETSTATUS, SLAVE_ADDR, 1'b1, 8'd2)
+    );
+    wait_status_idle();
+    apb_read(RESP_PORT, rdata);
+    apb_read(RX_PORT, rdata);
+    expect_eq("direct CCC limited RX byte0", rdata, 32'h31, 32'hff);
+    apb_read(RX_PORT, rdata);
+    expect_eq("direct CCC limited RX byte1", rdata, 32'hc3, 32'hff);
+  endtask
+endclass
+
+class i3c_direct_ccc_read_short_seq extends i3c_seq;
+  `uvm_object_utils(i3c_direct_ccc_read_short_seq)
+  function new(string name = "i3c_direct_ccc_read_short_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    bit [31:0] rdata;
+
+    cfg_i3c_mode();
+    send_apb(
+      WR,
+      CMD_PORT,
+      ccc_cmd(1'b1, CCC_GETSTATUS, SLAVE_ADDR, 1'b1, 8'd2)
+    );
+    wait_status_idle();
+    apb_read(RESP_PORT, rdata);
+    apb_read(RX_PORT, rdata);
+    expect_eq("direct CCC short RX byte0", rdata, 32'he1, 32'hff);
   endtask
 endclass
 

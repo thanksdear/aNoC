@@ -473,6 +473,66 @@ class i3c_direct_ccc_vseq extends i3c_virtual_seq;
   endtask
 endclass
 
+class i3c_direct_ccc_read_len2_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_direct_ccc_read_len2_vseq)
+
+  function new(string name = "i3c_direct_ccc_read_len2_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_target_txn                  cfg_req;
+    i3c_direct_ccc_read_len2_seq    controller_seq;
+
+    cfg_req = i3c_target_txn::type_id::create("cfg_req");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ack_addr = 1'b1;
+    cfg_req.read_enable = 1'b1;
+    cfg_req.ccc_ack_enable = 1'b1;
+    cfg_req.ccc_direct_enable = 1'b1;
+    // Target offers three bytes; the controller must terminate after two.
+    cfg_req.read_data = new[3];
+    cfg_req.read_data[0] = 8'h31;
+    cfg_req.read_data[1] = 8'hc3;
+    cfg_req.read_data[2] = 8'h7e;
+    configure_target(cfg_req);
+
+    controller_seq =
+      i3c_direct_ccc_read_len2_seq::type_id::create("controller_seq");
+    controller_seq.start(p_sequencer.apb_sqr);
+    idle_target();
+  endtask
+endclass
+
+class i3c_direct_ccc_read_short_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_direct_ccc_read_short_vseq)
+
+  function new(string name = "i3c_direct_ccc_read_short_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_target_txn                  cfg_req;
+    i3c_direct_ccc_read_short_seq   controller_seq;
+
+    cfg_req = i3c_target_txn::type_id::create("cfg_req");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ack_addr = 1'b1;
+    cfg_req.read_enable = 1'b1;
+    cfg_req.ccc_ack_enable = 1'b1;
+    cfg_req.ccc_direct_enable = 1'b1;
+    // Controller requests two bytes; target ends after its first byte.
+    cfg_req.read_data = new[1];
+    cfg_req.read_data[0] = 8'he1;
+    configure_target(cfg_req);
+
+    controller_seq =
+      i3c_direct_ccc_read_short_seq::type_id::create("controller_seq");
+    controller_seq.start(p_sequencer.apb_sqr);
+    idle_target();
+  endtask
+endclass
+
 class i3c_direct_ccc_nack_vseq extends i3c_virtual_seq;
   `uvm_object_utils(i3c_direct_ccc_nack_vseq)
 
