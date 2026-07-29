@@ -893,7 +893,37 @@ class i3c_ibi_no_payload_seq extends i3c_seq;
     wait_irq_asserted();
     apb_read(REG_IBI_STATUS, rdata);
     expect_eq("IBI no MDB status", rdata, 32'h0001_0012, 32'h0001_ffff);
-    send_apb(WR, REG_IBI_STATUS, 32'h0001_0000);
+
+    // Exercise both false terms of the RW1C condition independently.
+    // data[16]=1 without byte2 strobe must not clear IBI valid.
+    send_apb(WR, REG_IBI_STATUS, 32'h0001_0000, 4'b0001);
+    apb_read(REG_IBI_STATUS, rdata);
+    expect_eq(
+      "IBI valid preserved without byte2 strobe",
+      rdata,
+      32'h0001_0012,
+      32'h0001_ffff
+    );
+
+    // byte2 strobe with data[16]=0 must not clear IBI valid either.
+    send_apb(WR, REG_IBI_STATUS, 32'h0000_0000, 4'b0100);
+    apb_read(REG_IBI_STATUS, rdata);
+    expect_eq(
+      "IBI valid preserved for RW1C zero",
+      rdata,
+      32'h0001_0012,
+      32'h0001_ffff
+    );
+
+    // Only byte2 strobe together with data[16]=1 performs the clear.
+    send_apb(WR, REG_IBI_STATUS, 32'h0001_0000, 4'b0100);
+    apb_read(REG_IBI_STATUS, rdata);
+    expect_eq(
+      "IBI valid cleared by RW1C one",
+      rdata,
+      32'h0000_0012,
+      32'h0001_ffff
+    );
   endtask
 endclass
 
