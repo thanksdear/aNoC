@@ -90,6 +90,7 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
   logic       ccc_ack_enable;
   logic       ccc_direct_enable;
   logic       entdaa_participate;
+  logic       entdaa_expect_da_ack;
   logic       expect_ccc_target;
   logic [7:0] pending_direct_ccc_code;
   logic [7:0] read_data[$];
@@ -167,8 +168,8 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
   endtask
 
   // One ENTDAA intent describes the complete single-target plan.  A target
-  // that participates ACKs the first 7E/R header, arbitrates its ID, ACKs the
-  // expected assigned DA, then implicitly NACKs the next 7E/R round.
+  // that participates ACKs the first 7E/R header and arbitrates its ID.  It
+  // then either accepts the assigned DA or deliberately NACKs it.
   task publish_entdaa_intent(logic participate);
     i3c_target_intent intent;
 
@@ -183,7 +184,8 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
     intent.entdaa_participate = participate;
     intent.entdaa_id = cfg.entdaa_id;
     intent.entdaa_expected_da = cfg.entdaa_expected_da;
-    intent.entdaa_expect_da_ack = participate;
+    intent.entdaa_expect_da_ack =
+      participate && entdaa_expect_da_ack;
     intent_ap.write(intent);
   endtask
 
@@ -227,6 +229,7 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
     ccc_ack_enable = req.ccc_ack_enable;
     ccc_direct_enable = req.ccc_direct_enable;
     entdaa_participate = req.entdaa_participate;
+    entdaa_expect_da_ack = req.entdaa_expect_da_ack;
 
     if ((req.write_parity_error_index >= 0) &&
         (!req.i3c_write_tbit_mode ||
@@ -325,6 +328,7 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
     ccc_ack_enable = 1'b0;
     ccc_direct_enable = 1'b0;
     entdaa_participate = 1'b0;
+    entdaa_expect_da_ack = 1'b1;
     expect_ccc_target = 1'b0;
     pending_direct_ccc_code = 8'h00;
     read_data.delete();
@@ -360,6 +364,7 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
     logic       assigned;
     logic       participate;
     logic       da_valid;
+    logic       da_accept;
 
     // An already-addressed target is no longer part of the unaddressed
     // population, even if a stale test configuration still requests ENTDAA.
@@ -427,15 +432,16 @@ class i3c_target_driver extends uvm_driver #(i3c_target_txn);
           )
         )
 
+      da_accept = da_valid && entdaa_expect_da_ack;
       @(negedge vif.scl_in);
       vif.target_dbg_ack_phase <= 1'b1;
-      vif.target_drive_low <= da_valid; // ACK only a valid expected DA.
+      vif.target_drive_low <= da_accept;
       @(posedge vif.scl_in);
       @(negedge vif.scl_in);
       vif.target_drive_low <= 1'b0;
       vif.target_dbg_ack_phase <= 1'b0;
 
-      if (!da_valid) begin
+      if (!da_accept) begin
         wait_entdaa_stop();
         return;
       end

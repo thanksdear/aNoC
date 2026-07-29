@@ -32,6 +32,7 @@ REGRESSION_TESTS ?= \
 	i3c_direct_ccc_nack_test \
 	i3c_direct_ccc_write_test \
 	i3c_entdaa_test \
+	i3c_entdaa_da_nack_test \
 	i3c_entdaa_dynamic_addr_test \
 	i3c_sw_reset_test \
 	i3c_ibi_no_payload_test \

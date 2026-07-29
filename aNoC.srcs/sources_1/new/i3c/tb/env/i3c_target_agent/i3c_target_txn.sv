@@ -35,6 +35,9 @@ class i3c_target_txn extends uvm_sequence_item;
   rand logic          ccc_ack_enable;
   rand logic          ccc_direct_enable;
   rand logic          entdaa_participate;
+  // A participating target may reject the controller-assigned dynamic
+  // address.  This terminates ENTDAA after exactly one arbitration round.
+  rand logic          entdaa_expect_da_ack;
   rand logic [7:0]    read_data[];
 
   // Target-initiated IBI request.
@@ -58,6 +61,7 @@ class i3c_target_txn extends uvm_sequence_item;
     `uvm_field_int(ccc_ack_enable, UVM_ALL_ON)
     `uvm_field_int(ccc_direct_enable, UVM_ALL_ON)
     `uvm_field_int(entdaa_participate, UVM_ALL_ON)
+    `uvm_field_int(entdaa_expect_da_ack, UVM_ALL_ON)
     `uvm_field_array_int(read_data, UVM_ALL_ON)
     `uvm_field_int(ibi_addr, UVM_ALL_ON)
     `uvm_field_int(ibi_has_mdb, UVM_ALL_ON)
@@ -77,6 +81,7 @@ class i3c_target_txn extends uvm_sequence_item;
     ccc_ack_enable = 1'b0;
     ccc_direct_enable = 1'b0;
     entdaa_participate = 1'b0;
+    entdaa_expect_da_ack = 1'b1;
     ibi_addr = 7'h12;
     ibi_has_mdb = 1'b0;
     ibi_mdb = '0;

@@ -36,6 +36,7 @@ make run TEST=i3c_apb_reg_access_test
 make run TEST=i3c_sdr_private_write_test
 make run TEST=i3c_direct_ccc_test
 make run TEST=i3c_entdaa_test
+make run TEST=i3c_entdaa_da_nack_test
 make run TEST=i3c_ibi_payload_test
 make run TEST=i3c_full_feature_test
 ```
@@ -99,5 +100,4 @@ make compile
 make run TEST=i3c_full_feature_test
 make cov
 ```
-
 

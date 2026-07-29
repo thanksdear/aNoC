@@ -1005,6 +1005,49 @@ class i3c_entdaa_seq extends i3c_seq;
   endtask
 endclass
 
+// The target wins the first ENTDAA arbitration round but rejects the assigned
+// dynamic address.  The controller must terminate immediately with NACK:
+// there is no successful discovery record and no second 7E/R search round.
+class i3c_entdaa_da_nack_seq extends i3c_seq;
+  `uvm_object_utils(i3c_entdaa_da_nack_seq)
+
+  function new(string name = "i3c_entdaa_da_nack_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    bit [31:0] rdata;
+
+    cfg_i3c_mode();
+    send_apb(
+      WR,
+      CMD_PORT,
+      ccc_cmd(1'b0, CCC_ENTDAA, 7'h00, 1'b0, 8'd0)
+    );
+    wait_status_idle();
+    wait_irq_asserted();
+
+    apb_read(RESP_PORT, rdata);
+    expect_eq("ENTDAA DA-NACK response", rdata, 32'h0000_0002);
+
+    apb_read(REG_ERR_STATUS, rdata);
+    expect_eq("ENTDAA DA-NACK error", rdata, 32'h0000_0002);
+
+    // A rejected DA must not be published as a successful discovery.
+    apb_read(REG_ENTDAA_STATUS, rdata);
+    expect_eq(
+      "ENTDAA DA-NACK status remains invalid",
+      rdata,
+      32'h0000_0000,
+      32'h0000_01ff
+    );
+
+    send_apb(WR, REG_ERR_STATUS, 32'h0000_0002);
+    apb_read(REG_ERR_STATUS, rdata);
+    expect_eq("ENTDAA DA-NACK error clear", rdata, 32'h0000_0000);
+  endtask
+endclass
+
 class i3c_dynamic_addr_private_write_seq extends i3c_seq;
   `uvm_object_utils(i3c_dynamic_addr_private_write_seq)
 
