@@ -76,11 +76,11 @@ logic [31:0] csr_rdata;
 assign reg_wr_en = reg_wr_en_raw & ~is_fifo_access;
 
 // PRDATA mux：CSR 或 FIFO 数据
-logic [31:0] resp_rd_data;
+logic [1:0]  resp_rd_data;
 logic [7:0]  rx_rd_data;
 always_comb begin
     case (PADDR[7:0])
-        `RESP_PORT: PRDATA = resp_rd_data;
+        `RESP_PORT: PRDATA = {30'd0, resp_rd_data};
         `RX_PORT:   PRDATA = {24'd0, rx_rd_data};
         default:    PRDATA = csr_rdata;
     endcase
@@ -99,7 +99,7 @@ logic        hw_ibi_set, hw_parity_err_set, hw_nack_err_set;
 logic [31:0] cmd_rd_data;
 logic        cmd_rd_en, cmd_empty, cmd_full;
 
-logic [31:0] resp_wr_data;
+logic [1:0]  resp_wr_data;
 logic        resp_wr_en, resp_empty, resp_full;
 
 logic [7:0]  tx_rd_data;
@@ -213,7 +213,7 @@ assign cmd_rd_en  = (ds_state == DS_FETCH) && !cmd_empty && !ibi_req && core_en;
 
 // 传输完成后写 response FIFO
 assign resp_wr_en   = (ds_state == DS_RESP) && !resp_full;
-assign resp_wr_data = {30'd0, nack_seen, ds_parity_err};
+assign resp_wr_data = {nack_seen, ds_parity_err};
 
 // Mux 1：serializer 上游选择 frame_scheduler 或 ccc_handler
 logic use_ccc;
@@ -367,7 +367,7 @@ sync_fifo #(.WIDTH(32), .DEPTH(8)) u_cmd_fifo (
     .full(cmd_full),   .empty(cmd_empty)
 );
 
-sync_fifo #(.WIDTH(32), .DEPTH(8)) u_resp_fifo (
+sync_fifo #(.WIDTH(2), .DEPTH(8)) u_resp_fifo (
     .clk(PCLK), .rst_n(int_rst_n),
     .wr_en(resp_wr_en), .wr_data(resp_wr_data),
     .rd_en(resp_rd_en), .rd_data(resp_rd_data),
