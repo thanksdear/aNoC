@@ -234,6 +234,28 @@ class i3c_apb_strb_seq extends i3c_seq;
     send_apb(WR, REG_CTRL, 32'h0000_0003, 4'b0001);
     apb_read(REG_CTRL, rdata);
     expect_eq("APB STRB CTRL byte0", rdata, 32'h0000_0003, 32'h0000_001f);
+
+    // CTRL only implements byte0. A write through another byte lane must
+    // exercise the implicit else branch without changing the register.
+    send_apb(WR, REG_CTRL, 32'hffff_ffff, 4'b0010);
+    apb_read(REG_CTRL, rdata);
+    expect_eq(
+      "APB STRB CTRL ignores non-byte0 write",
+      rdata,
+      32'h0000_0003,
+      32'h0000_001f
+    );
+
+    // Exercise the CSR write decoder's default branch. The unmapped write
+    // must not have any side effect on a known RW register.
+    send_apb(WR, 8'h34, 32'hffff_ffff, 4'hf);
+    apb_read(REG_CTRL, rdata);
+    expect_eq(
+      "APB unmapped write has no CTRL side effect",
+      rdata,
+      32'h0000_0003,
+      32'h0000_001f
+    );
   endtask
 endclass
 
@@ -402,8 +424,32 @@ class i3c_queued_nack_recovery_seq extends i3c_seq;
     apb_read(RESP_PORT, rdata);
     apb_read(RESP_PORT, rdata);
     apb_read(REG_ERR_STATUS, rdata);
+    expect_eq(
+      "queued NACK error set",
+      rdata,
+      32'h0000_0002,
+      32'h0000_0003
+    );
+
+    // ERR_STATUS is byte0 RW1C. Writing the clear bit through byte2 must
+    // exercise the implicit else branch and preserve the sticky error.
+    send_apb(WR, REG_ERR_STATUS, 32'h0000_0002, 4'b0100);
+    apb_read(REG_ERR_STATUS, rdata);
+    expect_eq(
+      "queued NACK survives invalid RW1C strobe",
+      rdata,
+      32'h0000_0002,
+      32'h0000_0003
+    );
+
     send_apb(WR, REG_ERR_STATUS, 32'h0000_0002);
     apb_read(REG_ERR_STATUS, rdata);
+    expect_eq(
+      "queued NACK clears with byte0 RW1C",
+      rdata,
+      32'h0000_0000,
+      32'h0000_0003
+    );
   endtask
 endclass
 
