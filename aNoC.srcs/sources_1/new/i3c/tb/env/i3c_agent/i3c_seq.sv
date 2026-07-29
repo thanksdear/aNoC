@@ -672,6 +672,52 @@ class i3c_broadcast_ccc_seq extends i3c_seq;
   endtask
 endclass
 
+class i3c_broadcast_ccc_nack_seq extends i3c_seq;
+  `uvm_object_utils(i3c_broadcast_ccc_nack_seq)
+  function new(string name = "i3c_broadcast_ccc_nack_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    bit [31:0] rdata;
+
+    cfg_i3c_mode();
+    send_apb(
+      WR,
+      CMD_PORT,
+      ccc_cmd(1'b0, CCC_ENEC, 7'h00, 1'b0, 8'd0)
+    );
+    wait_status_idle();
+    apb_read(RESP_PORT, rdata);
+    apb_read(REG_ERR_STATUS, rdata);
+    send_apb(WR, REG_ERR_STATUS, 32'h0000_0002);
+    apb_read(REG_ERR_STATUS, rdata);
+  endtask
+endclass
+
+class i3c_broadcast_ccc_payload_seq extends i3c_seq;
+  `uvm_object_utils(i3c_broadcast_ccc_payload_seq)
+  function new(string name = "i3c_broadcast_ccc_payload_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    bit [31:0] rdata;
+
+    cfg_i3c_mode();
+    // ENEC uses one defining byte here, exercising
+    // S_CCC_CODE -> S_DATA_TX -> S_STOP.
+    send_apb(WR, TX_PORT, 32'h0000_00a5);
+    send_apb(
+      WR,
+      CMD_PORT,
+      ccc_cmd(1'b0, CCC_ENEC, 7'h00, 1'b0, 8'd1)
+    );
+    wait_status_idle();
+    apb_read(RESP_PORT, rdata);
+  endtask
+endclass
+
 class i3c_direct_ccc_seq extends i3c_seq;
   `uvm_object_utils(i3c_direct_ccc_seq)
   function new(string name = "i3c_direct_ccc_seq"); super.new(name); endfunction
@@ -683,6 +729,29 @@ class i3c_direct_ccc_seq extends i3c_seq;
     apb_read(RESP_PORT, rdata);
     apb_read(RX_PORT, rdata);
     expect_eq("direct CCC RX byte0", rdata, 32'h55, 32'hff);
+  endtask
+endclass
+
+class i3c_direct_ccc_nack_seq extends i3c_seq;
+  `uvm_object_utils(i3c_direct_ccc_nack_seq)
+  function new(string name = "i3c_direct_ccc_nack_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    bit [31:0] rdata;
+
+    cfg_i3c_mode();
+    send_apb(
+      WR,
+      CMD_PORT,
+      ccc_cmd(1'b1, CCC_GETSTATUS, SLAVE_ADDR, 1'b1, 8'd1)
+    );
+    wait_status_idle();
+    apb_read(RESP_PORT, rdata);
+    apb_read(REG_ERR_STATUS, rdata);
+    send_apb(WR, REG_ERR_STATUS, 32'h0000_0002);
+    apb_read(REG_ERR_STATUS, rdata);
   endtask
 endclass
 

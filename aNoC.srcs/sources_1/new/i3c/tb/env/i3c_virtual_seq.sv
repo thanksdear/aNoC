@@ -399,6 +399,52 @@ class i3c_broadcast_ccc_vseq extends i3c_virtual_seq;
   endtask
 endclass
 
+class i3c_broadcast_ccc_nack_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_broadcast_ccc_nack_vseq)
+
+  function new(string name = "i3c_broadcast_ccc_nack_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_target_txn              cfg_req;
+    i3c_broadcast_ccc_nack_seq  controller_seq;
+
+    cfg_req = i3c_target_txn::type_id::create("cfg_req");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ccc_ack_enable = 1'b0;
+    configure_target(cfg_req);
+
+    controller_seq =
+      i3c_broadcast_ccc_nack_seq::type_id::create("controller_seq");
+    controller_seq.start(p_sequencer.apb_sqr);
+    idle_target();
+  endtask
+endclass
+
+class i3c_broadcast_ccc_payload_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_broadcast_ccc_payload_vseq)
+
+  function new(string name = "i3c_broadcast_ccc_payload_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_target_txn                 cfg_req;
+    i3c_broadcast_ccc_payload_seq  controller_seq;
+
+    cfg_req = i3c_target_txn::type_id::create("cfg_req");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ccc_ack_enable = 1'b1;
+    configure_target(cfg_req);
+
+    controller_seq =
+      i3c_broadcast_ccc_payload_seq::type_id::create("controller_seq");
+    controller_seq.start(p_sequencer.apb_sqr);
+    idle_target();
+  endtask
+endclass
+
 class i3c_direct_ccc_vseq extends i3c_virtual_seq;
   `uvm_object_utils(i3c_direct_ccc_vseq)
 
@@ -422,6 +468,31 @@ class i3c_direct_ccc_vseq extends i3c_virtual_seq;
 
     controller_seq =
       i3c_direct_ccc_seq::type_id::create("controller_seq");
+    controller_seq.start(p_sequencer.apb_sqr);
+    idle_target();
+  endtask
+endclass
+
+class i3c_direct_ccc_nack_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_direct_ccc_nack_vseq)
+
+  function new(string name = "i3c_direct_ccc_nack_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_target_txn           cfg_req;
+    i3c_direct_ccc_nack_seq  controller_seq;
+
+    cfg_req = i3c_target_txn::type_id::create("cfg_req");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ack_addr = 1'b0;
+    cfg_req.ccc_ack_enable = 1'b1;
+    cfg_req.ccc_direct_enable = 1'b1;
+    configure_target(cfg_req);
+
+    controller_seq =
+      i3c_direct_ccc_nack_seq::type_id::create("controller_seq");
     controller_seq.start(p_sequencer.apb_sqr);
     idle_target();
   endtask
