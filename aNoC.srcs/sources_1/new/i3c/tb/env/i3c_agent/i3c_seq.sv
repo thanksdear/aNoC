@@ -39,25 +39,27 @@ class i3c_seq extends uvm_sequence #(i3c_txn);
   endtask
 
   task send_apb(input op_e op, input bit [7:0] addr,
-                input bit [31:0] data = '0, input bit [3:0] strb = 4'hf);
+                input bit [31:0] data = '0, input bit [3:0] strb = 4'hf,
+                input int unsigned start_delay = 0);
     i3c_txn tr = i3c_txn::type_id::create("tr");
     start_item(tr);
     tr.op = op;
     tr.addr = addr;
     tr.data = data;
     tr.strb = strb;
-    tr.start_delay = 0;
+    tr.start_delay = start_delay;
     finish_item(tr);
   endtask
 
-  task apb_read(input bit [7:0] addr, output bit [31:0] data);
+  task apb_read(input bit [7:0] addr, output bit [31:0] data,
+                input int unsigned start_delay = 0);
     i3c_txn tr = i3c_txn::type_id::create("rd_tr");
     start_item(tr);
     tr.op = RD;
     tr.addr = addr;
     tr.data = '0;
     tr.strb = 4'h0;
-    tr.start_delay = 0;
+    tr.start_delay = start_delay;
     finish_item(tr);
     data = tr.data;
   endtask
@@ -73,14 +75,19 @@ class i3c_seq extends uvm_sequence #(i3c_txn);
 
   task cfg_i3c_mode(input bit [15:0] scl_high = 16'd4,
                     input bit [15:0] scl_low  = 16'd4,
-                    input bit [15:0] sda_hold = 16'd2);
-    send_apb(WR, REG_BUS_TIMING_0, {scl_high, scl_low});
-    send_apb(WR, REG_BUS_TIMING_1, {16'd0, sda_hold});
-    send_apb(WR, REG_CTRL, 32'h0000_0003);
+                    input bit [15:0] sda_hold = 16'd2,
+                    input int unsigned start_delay = 0);
+    send_apb(
+      WR, REG_BUS_TIMING_0, {scl_high, scl_low}, 4'hf, start_delay
+    );
+    send_apb(
+      WR, REG_BUS_TIMING_1, {16'd0, sda_hold}, 4'hf, start_delay
+    );
+    send_apb(WR, REG_CTRL, 32'h0000_0003, 4'hf, start_delay);
   endtask
 
-  task cfg_i2c_mode();
-    send_apb(WR, REG_CTRL, 32'h0000_0002);
+  task cfg_i2c_mode(input int unsigned start_delay = 0);
+    send_apb(WR, REG_CTRL, 32'h0000_0002, 4'hf, start_delay);
   endtask
 
   task wait_status_idle();
@@ -1290,5 +1297,683 @@ class i3c_irq_access_seq extends i3c_seq;
     send_apb(WR, CMD_PORT, private_cmd(SLAVE_ADDR, 1'b0, 8'd0));
     wait_irq_asserted();
     apb_read(RESP_PORT, rdata);
+  endtask
+endclass
+
+// -----------------------------------------------------------------------------
+// Constrained-random scenarios
+// -----------------------------------------------------------------------------
+
+typedef enum logic {
+  I3C_RANDOM_BROADCAST_CCC,
+  I3C_RANDOM_DIRECT_CCC_READ
+} i3c_random_ccc_kind_e;
+
+// One legal private-transfer scenario.  The object is randomized first, then
+// the virtual sequence derives both the controller command and the independent
+// target response plan from it.
+class i3c_random_private_cfg extends uvm_object;
+  `uvm_object_utils_begin(i3c_random_private_cfg)
+    `uvm_field_int(i3c_mode, UVM_ALL_ON)
+    `uvm_field_int(rw, UVM_ALL_ON)
+    `uvm_field_int(addr_ack, UVM_ALL_ON)
+    `uvm_field_int(command_length, UVM_ALL_ON)
+    `uvm_field_int(target_length, UVM_ALL_ON)
+    `uvm_field_int(i2c_write_ack_count, UVM_ALL_ON)
+    `uvm_field_int(inject_parity_error, UVM_ALL_ON)
+    `uvm_field_int(parity_error_index, UVM_ALL_ON)
+    `uvm_field_int(command_before_tx, UVM_ALL_ON)
+    `uvm_field_int(tx_gap, UVM_ALL_ON)
+    `uvm_field_int(apb_delay, UVM_ALL_ON)
+    `uvm_field_int(scl_high, UVM_ALL_ON)
+    `uvm_field_int(scl_low, UVM_ALL_ON)
+    `uvm_field_int(sda_hold, UVM_ALL_ON)
+    `uvm_field_array_int(write_data, UVM_ALL_ON)
+    `uvm_field_array_int(read_data, UVM_ALL_ON)
+  `uvm_object_utils_end
+
+  rand logic          i3c_mode;
+  rand logic          rw;
+  rand logic          addr_ack;
+  rand int unsigned   command_length;
+  rand int unsigned   target_length;
+  rand int unsigned   i2c_write_ack_count;
+  rand logic          inject_parity_error;
+  rand int            parity_error_index;
+  rand logic          command_before_tx;
+  rand int unsigned   tx_gap;
+  rand int unsigned   apb_delay;
+  rand logic [15:0]   scl_high;
+  rand logic [15:0]   scl_low;
+  rand logic [15:0]   sda_hold;
+  rand logic [7:0]    write_data[];
+  rand logic [7:0]    read_data[];
+
+  constraint c_mode_mix {
+    i3c_mode dist {1'b1 := 3, 1'b0 := 1};
+    rw        dist {1'b0 := 1, 1'b1 := 1};
+    addr_ack  dist {1'b1 := 8, 1'b0 := 2};
+  }
+
+  constraint c_lengths {
+    command_length inside {[1:8]};
+
+    if (rw && i3c_mode)
+      target_length inside {[1:command_length + 2]};
+    else if (rw)
+      target_length == command_length;
+    else
+      target_length == 0;
+
+    if (!rw)
+      write_data.size() == command_length;
+    else
+      write_data.size() == 0;
+
+    if (rw)
+      read_data.size() == target_length;
+    else
+      read_data.size() == 0;
+  }
+
+  constraint c_write_response {
+    if (!rw && !i3c_mode)
+      i2c_write_ack_count inside {[0:command_length]};
+    else if (!rw)
+      i2c_write_ack_count == command_length;
+    else
+      i2c_write_ack_count == 0;
+
+    if (!rw && i3c_mode && addr_ack)
+      inject_parity_error dist {1'b0 := 9, 1'b1 := 1};
+    else
+      inject_parity_error == 1'b0;
+
+    if (inject_parity_error) {
+      parity_error_index inside {[0:command_length - 1]};
+    }
+    else
+      parity_error_index == -1;
+  }
+
+  constraint c_order_and_timing {
+    if (!rw && addr_ack)
+      command_before_tx dist {1'b0 := 3, 1'b1 := 1};
+    else
+      command_before_tx == 1'b0;
+
+    tx_gap    inside {[0:12]};
+    apb_delay inside {[0:4]};
+    scl_high  inside {[2:8]};
+    scl_low   inside {[2:8]};
+    sda_hold  inside {[1:4]};
+  }
+
+  function new(string name = "i3c_random_private_cfg");
+    super.new(name);
+  endfunction
+
+  function void post_randomize();
+    // The fault injector is wired-low, so it can only corrupt a legal high
+    // odd-parity T-bit.  Normalize the selected random byte to even data
+    // parity, which makes its correct odd-parity T-bit high.
+    if (inject_parity_error &&
+        ((^write_data[parity_error_index]) == 1'b1))
+      write_data[parity_error_index][0] =
+        ~write_data[parity_error_index][0];
+  endfunction
+endclass
+
+class i3c_random_ccc_cfg extends uvm_object;
+  `uvm_object_utils_begin(i3c_random_ccc_cfg)
+    `uvm_field_enum(i3c_random_ccc_kind_e, kind, UVM_ALL_ON)
+    `uvm_field_int(broadcast_ack, UVM_ALL_ON)
+    `uvm_field_int(target_ack, UVM_ALL_ON)
+    `uvm_field_int(command_length, UVM_ALL_ON)
+    `uvm_field_int(target_length, UVM_ALL_ON)
+    `uvm_field_int(command_before_tx, UVM_ALL_ON)
+    `uvm_field_int(tx_gap, UVM_ALL_ON)
+    `uvm_field_int(apb_delay, UVM_ALL_ON)
+    `uvm_field_int(scl_high, UVM_ALL_ON)
+    `uvm_field_int(scl_low, UVM_ALL_ON)
+    `uvm_field_int(sda_hold, UVM_ALL_ON)
+    `uvm_field_array_int(write_data, UVM_ALL_ON)
+    `uvm_field_array_int(read_data, UVM_ALL_ON)
+  `uvm_object_utils_end
+
+  rand i3c_random_ccc_kind_e kind;
+  rand logic                 broadcast_ack;
+  rand logic                 target_ack;
+  rand int unsigned          command_length;
+  rand int unsigned          target_length;
+  rand logic                 command_before_tx;
+  rand int unsigned          tx_gap;
+  rand int unsigned          apb_delay;
+  rand logic [15:0]          scl_high;
+  rand logic [15:0]          scl_low;
+  rand logic [15:0]          sda_hold;
+  rand logic [7:0]           write_data[];
+  rand logic [7:0]           read_data[];
+
+  constraint c_kind_mix {
+    kind dist {
+      I3C_RANDOM_BROADCAST_CCC   := 1,
+      I3C_RANDOM_DIRECT_CCC_READ := 2
+    };
+    broadcast_ack dist {1'b1 := 8, 1'b0 := 2};
+  }
+
+  constraint c_shape {
+    if (kind == I3C_RANDOM_BROADCAST_CCC) {
+      command_length inside {0, 2};
+      target_length == 0;
+      target_ack == 1'b0;
+      write_data.size() == command_length;
+      read_data.size() == 0;
+    }
+    else {
+      command_length inside {[1:4]};
+      target_length inside {[1:command_length + 1]};
+      target_ack dist {1'b1 := 8, 1'b0 := 2};
+      write_data.size() == 0;
+      read_data.size() == target_length;
+    }
+  }
+
+  constraint c_order_and_timing {
+    if ((kind == I3C_RANDOM_BROADCAST_CCC) &&
+        (command_length != 0) && broadcast_ack)
+      command_before_tx dist {1'b0 := 2, 1'b1 := 1};
+    else
+      command_before_tx == 1'b0;
+
+    tx_gap    inside {[0:12]};
+    apb_delay inside {[0:4]};
+    scl_high  inside {[2:8]};
+    scl_low   inside {[2:8]};
+    sda_hold  inside {[1:4]};
+  }
+
+  function new(string name = "i3c_random_ccc_cfg");
+    super.new(name);
+  endfunction
+endclass
+
+class i3c_random_private_seq extends i3c_seq;
+  `uvm_object_utils(i3c_random_private_seq)
+
+  i3c_random_private_cfg scenario;
+
+  function new(string name = "i3c_random_private_seq");
+    super.new(name);
+  endfunction
+
+  task send_write_payload(int unsigned count);
+    for (int i = 0; i < count; i++)
+      send_apb(
+        WR,
+        TX_PORT,
+        {24'h0, scenario.write_data[i]},
+        4'hf,
+        scenario.apb_delay
+      );
+  endtask
+
+  task body();
+    bit [31:0] rdata;
+    bit [1:0]  expected_result;
+    int unsigned write_count;
+    int unsigned read_count;
+
+    if (scenario == null)
+      `uvm_fatal("RAND_PRIVATE", "scenario is null")
+
+    cfg_i3c_mode(
+      scenario.scl_high,
+      scenario.scl_low,
+      scenario.sda_hold,
+      scenario.apb_delay
+    );
+    if (!scenario.i3c_mode)
+      cfg_i2c_mode(scenario.apb_delay);
+
+    write_count = 0;
+    if (!scenario.rw && scenario.addr_ack) begin
+      if (scenario.i3c_mode ||
+          (scenario.i2c_write_ack_count == scenario.command_length))
+        write_count = scenario.command_length;
+      else
+        write_count = scenario.i2c_write_ack_count + 1;
+    end
+
+    if (!scenario.rw && !scenario.command_before_tx)
+      send_write_payload(write_count);
+
+    send_apb(
+      WR,
+      CMD_PORT,
+      private_cmd(
+        SLAVE_ADDR,
+        scenario.rw,
+        scenario.command_length[7:0]
+      ),
+      4'hf,
+      scenario.apb_delay
+    );
+
+    if (!scenario.rw && scenario.command_before_tx) begin
+      repeat (scenario.tx_gap) @(posedge vif.clk);
+      send_write_payload(write_count);
+    end
+
+    wait_status_idle();
+    apb_read(RESP_PORT, rdata, scenario.apb_delay);
+
+    expected_result = 2'b00;
+    if (!scenario.addr_ack)
+      expected_result[1] = 1'b1;
+    else if (!scenario.i3c_mode && !scenario.rw &&
+             (scenario.i2c_write_ack_count < scenario.command_length))
+      expected_result[1] = 1'b1;
+    if (scenario.inject_parity_error)
+      expected_result[0] = 1'b1;
+    expect_eq(
+      "random private response",
+      rdata,
+      {30'h0, expected_result},
+      32'h0000_0003
+    );
+
+    read_count = 0;
+    if (scenario.addr_ack && scenario.rw) begin
+      if (scenario.i3c_mode &&
+          (scenario.target_length < scenario.command_length))
+        read_count = scenario.target_length;
+      else
+        read_count = scenario.command_length;
+    end
+    for (int i = 0; i < read_count; i++) begin
+      apb_read(RX_PORT, rdata, scenario.apb_delay);
+      expect_eq(
+        $sformatf("random private RX[%0d]", i),
+        rdata,
+        {24'h0, scenario.read_data[i]},
+        32'h0000_00ff
+      );
+    end
+
+    apb_read(REG_ERR_STATUS, rdata, scenario.apb_delay);
+    expect_eq(
+      "random private error status",
+      rdata,
+      {30'h0, expected_result},
+      32'h0000_0003
+    );
+    if (expected_result != 0) begin
+      send_apb(
+        WR,
+        REG_ERR_STATUS,
+        {30'h0, expected_result},
+        4'hf,
+        scenario.apb_delay
+      );
+      apb_read(REG_ERR_STATUS, rdata, scenario.apb_delay);
+      expect_eq(
+        "random private error clear",
+        rdata,
+        32'h0000_0000,
+        32'h0000_0003
+      );
+    end
+  endtask
+endclass
+
+class i3c_random_ccc_seq extends i3c_seq;
+  `uvm_object_utils(i3c_random_ccc_seq)
+
+  i3c_random_ccc_cfg scenario;
+
+  function new(string name = "i3c_random_ccc_seq");
+    super.new(name);
+  endfunction
+
+  task send_write_payload();
+    foreach (scenario.write_data[i])
+      send_apb(
+        WR,
+        TX_PORT,
+        {24'h0, scenario.write_data[i]},
+        4'hf,
+        scenario.apb_delay
+      );
+  endtask
+
+  task body();
+    bit [31:0] rdata;
+    bit         expect_nack;
+    int unsigned read_count;
+    logic [7:0] ccc_code;
+
+    if (scenario == null)
+      `uvm_fatal("RAND_CCC", "scenario is null")
+
+    cfg_i3c_mode(
+      scenario.scl_high,
+      scenario.scl_low,
+      scenario.sda_hold,
+      scenario.apb_delay
+    );
+
+    if (scenario.kind == I3C_RANDOM_BROADCAST_CCC) begin
+      ccc_code =
+        (scenario.command_length == 0) ? CCC_ENEC : CCC_SETMWL;
+      if (scenario.broadcast_ack && !scenario.command_before_tx)
+        send_write_payload();
+      send_apb(
+        WR,
+        CMD_PORT,
+        ccc_cmd(
+          1'b0,
+          ccc_code,
+          7'h00,
+          1'b0,
+          scenario.command_length[7:0]
+        ),
+        4'hf,
+        scenario.apb_delay
+      );
+      if (scenario.broadcast_ack && scenario.command_before_tx) begin
+        repeat (scenario.tx_gap) @(posedge vif.clk);
+        send_write_payload();
+      end
+    end
+    else begin
+      ccc_code = CCC_GETSTATUS;
+      send_apb(
+        WR,
+        CMD_PORT,
+        ccc_cmd(
+          1'b1,
+          ccc_code,
+          SLAVE_ADDR,
+          1'b1,
+          scenario.command_length[7:0]
+        ),
+        4'hf,
+        scenario.apb_delay
+      );
+    end
+
+    wait_status_idle();
+    apb_read(RESP_PORT, rdata, scenario.apb_delay);
+    expect_nack = !scenario.broadcast_ack ||
+      ((scenario.kind == I3C_RANDOM_DIRECT_CCC_READ) &&
+       !scenario.target_ack);
+    expect_eq(
+      "random CCC response",
+      rdata,
+      {30'h0, expect_nack, 1'b0},
+      32'h0000_0003
+    );
+
+    read_count = 0;
+    if ((scenario.kind == I3C_RANDOM_DIRECT_CCC_READ) &&
+        scenario.broadcast_ack && scenario.target_ack) begin
+      if (scenario.target_length < scenario.command_length)
+        read_count = scenario.target_length;
+      else
+        read_count = scenario.command_length;
+    end
+    for (int i = 0; i < read_count; i++) begin
+      apb_read(RX_PORT, rdata, scenario.apb_delay);
+      expect_eq(
+        $sformatf("random direct CCC RX[%0d]", i),
+        rdata,
+        {24'h0, scenario.read_data[i]},
+        32'h0000_00ff
+      );
+    end
+
+    apb_read(REG_ERR_STATUS, rdata, scenario.apb_delay);
+    expect_eq(
+      "random CCC error status",
+      rdata,
+      {30'h0, expect_nack, 1'b0},
+      32'h0000_0003
+    );
+    if (expect_nack) begin
+      send_apb(
+        WR,
+        REG_ERR_STATUS,
+        32'h0000_0002,
+        4'hf,
+        scenario.apb_delay
+      );
+      apb_read(REG_ERR_STATUS, rdata, scenario.apb_delay);
+      expect_eq(
+        "random CCC error clear",
+        rdata,
+        32'h0000_0000,
+        32'h0000_0003
+      );
+    end
+  endtask
+endclass
+
+class i3c_random_entdaa_seq extends i3c_seq;
+  `uvm_object_utils(i3c_random_entdaa_seq)
+
+  logic broadcast_ack;
+  logic participate;
+  logic expect_da_ack;
+
+  function new(string name = "i3c_random_entdaa_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    bit [31:0] rdata;
+    bit         expect_nack;
+
+    cfg_i3c_mode();
+    send_apb(
+      WR,
+      CMD_PORT,
+      ccc_cmd(1'b0, CCC_ENTDAA, 7'h00, 1'b0, 8'd0)
+    );
+    wait_status_idle();
+    apb_read(RESP_PORT, rdata);
+
+    expect_nack = !broadcast_ack ||
+      (broadcast_ack && participate && !expect_da_ack);
+    expect_eq(
+      "random ENTDAA response",
+      rdata,
+      {30'h0, expect_nack, 1'b0},
+      32'h0000_0003
+    );
+
+    apb_read(REG_ENTDAA_STATUS, rdata);
+    if (broadcast_ack && participate && expect_da_ack)
+      expect_eq(
+        "random ENTDAA assigned",
+        rdata,
+        32'h0000_0101,
+        32'h0000_01ff
+      );
+    else
+      expect_eq(
+        "random ENTDAA remains unassigned",
+        rdata,
+        32'h0000_0000,
+        32'h0000_01ff
+      );
+
+    apb_read(REG_ERR_STATUS, rdata);
+    expect_eq(
+      "random ENTDAA error status",
+      rdata,
+      {30'h0, expect_nack, 1'b0},
+      32'h0000_0003
+    );
+    if (expect_nack) begin
+      send_apb(WR, REG_ERR_STATUS, 32'h0000_0002);
+      apb_read(REG_ERR_STATUS, rdata);
+      expect_eq(
+        "random ENTDAA error clear",
+        rdata,
+        32'h0000_0000,
+        32'h0000_0003
+      );
+    end
+  endtask
+endclass
+
+class i3c_random_ibi_seq extends i3c_seq;
+  `uvm_object_utils(i3c_random_ibi_seq)
+
+  logic       has_mdb;
+  logic [7:0] mdb;
+  uvm_event   target_ready;
+
+  function new(string name = "i3c_random_ibi_seq");
+    super.new(name);
+    target_ready = new("target_ready");
+  endfunction
+
+  task body();
+    bit [31:0] rdata;
+    bit [31:0] expected_status;
+
+    cfg_i3c_mode();
+    send_apb(
+      WR,
+      REG_CTRL,
+      has_mdb ? 32'h0000_001b : 32'h0000_000b
+    );
+    repeat ($urandom_range(12, 0)) @(posedge vif.clk);
+    target_ready.trigger();
+    wait_irq_asserted();
+
+    expected_status = 32'h0001_0012;
+    if (has_mdb)
+      expected_status = 32'h0001_0192;
+    apb_read(REG_IBI_STATUS, rdata);
+    expect_eq(
+      "random IBI status",
+      rdata,
+      expected_status,
+      32'h0001_ffff
+    );
+    if (has_mdb) begin
+      apb_read(RX_PORT, rdata);
+      expect_eq(
+        "random IBI MDB",
+        rdata,
+        {24'h0, mdb},
+        32'h0000_00ff
+      );
+    end
+    send_apb(WR, REG_IBI_STATUS, 32'h0001_0000, 4'b0100);
+    apb_read(REG_IBI_STATUS, rdata);
+    expect_eq(
+      "random IBI status clear",
+      rdata,
+      expected_status & ~32'h0001_0000,
+      32'h0001_ffff
+    );
+  endtask
+endclass
+
+class i3c_constrained_random_apb_seq extends i3c_seq;
+  `uvm_object_utils(i3c_constrained_random_apb_seq)
+
+  int unsigned iterations = 40;
+
+  function new(string name = "i3c_constrained_random_apb_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    bit [31:0] expected_timing_0;
+    bit [31:0] expected_timing_1;
+    bit [31:0] expected_ctrl;
+    bit [31:0] rdata;
+
+    expected_timing_0 = {16'd6, 16'd6};
+    expected_timing_1 = 32'd2;
+    expected_ctrl = 32'h0000_0001;
+
+    for (int iter = 0; iter < iterations; iter++) begin
+      i3c_txn tr;
+
+      tr = i3c_txn::type_id::create($sformatf("random_apb_%0d", iter));
+      if (!tr.randomize() with {
+            op == WR;
+            addr inside {
+              REG_BUS_TIMING_0,
+              REG_BUS_TIMING_1,
+              REG_CTRL
+            };
+            strb inside {[4'b0001:4'b1111]};
+            if (addr == REG_CTRL)
+              data[2] == 1'b0;
+          })
+        `uvm_fatal(
+          "RAND_APB",
+          $sformatf("APB transaction randomization failed at iteration %0d",
+                    iter)
+        )
+
+      start_item(tr);
+      finish_item(tr);
+
+      case (tr.addr)
+        REG_BUS_TIMING_0:
+          for (int lane = 0; lane < 4; lane++)
+            if (tr.strb[lane])
+              expected_timing_0[lane*8 +: 8] =
+                tr.data[lane*8 +: 8];
+
+        REG_BUS_TIMING_1:
+          for (int lane = 0; lane < 2; lane++)
+            if (tr.strb[lane])
+              expected_timing_1[lane*8 +: 8] =
+                tr.data[lane*8 +: 8];
+
+        REG_CTRL:
+          if (tr.strb[0])
+            expected_ctrl = tr.data & 32'h0000_001b;
+
+        default:
+          `uvm_fatal("RAND_APB", "randomized an unsupported APB address")
+      endcase
+
+      apb_read(tr.addr, rdata, tr.start_delay);
+      case (tr.addr)
+        REG_BUS_TIMING_0:
+          expect_eq(
+            $sformatf("random APB timing0[%0d]", iter),
+            rdata,
+            expected_timing_0
+          );
+        REG_BUS_TIMING_1:
+          expect_eq(
+            $sformatf("random APB timing1[%0d]", iter),
+            rdata,
+            expected_timing_1,
+            32'h0000_ffff
+          );
+        REG_CTRL:
+          expect_eq(
+            $sformatf("random APB ctrl[%0d]", iter),
+            rdata,
+            expected_ctrl,
+            32'h0000_001f
+          );
+        default:
+          ;
+      endcase
+    end
   endtask
 endclass

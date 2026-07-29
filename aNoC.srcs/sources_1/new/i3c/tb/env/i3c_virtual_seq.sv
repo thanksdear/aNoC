@@ -931,3 +931,252 @@ class i3c_sw_reset_vseq extends i3c_virtual_seq;
     idle_target();
   endtask
 endclass
+
+class i3c_constrained_random_private_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_constrained_random_private_vseq)
+
+  int unsigned iterations = 30;
+
+  function new(string name = "i3c_constrained_random_private_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    for (int iter = 0; iter < iterations; iter++) begin
+      i3c_random_private_cfg scenario;
+      i3c_target_txn         cfg_req;
+      i3c_random_private_seq controller_seq;
+
+      scenario = i3c_random_private_cfg::type_id::create(
+        $sformatf("scenario_%0d", iter)
+      );
+      if (!scenario.randomize())
+        `uvm_fatal(
+          "RAND_PRIVATE",
+          $sformatf("scenario randomization failed at iteration %0d", iter)
+        )
+
+      `uvm_info(
+        "RAND_PRIVATE",
+        $sformatf(
+          "iter=%0d mode=%s rw=%0b len=%0d target_len=%0d addr_ack=%0b i2c_ack_count=%0d parity_idx=%0d cmd_before_tx=%0b",
+          iter,
+          scenario.i3c_mode ? "I3C" : "I2C",
+          scenario.rw,
+          scenario.command_length,
+          scenario.target_length,
+          scenario.addr_ack,
+          scenario.i2c_write_ack_count,
+          scenario.parity_error_index,
+          scenario.command_before_tx
+        ),
+        UVM_LOW
+      )
+
+      cfg_req = i3c_target_txn::type_id::create(
+        $sformatf("target_cfg_%0d", iter)
+      );
+      cfg_req.op = I3C_TARGET_CONFIG;
+      cfg_req.ack_addr = scenario.addr_ack;
+      cfg_req.read_enable = scenario.rw;
+      cfg_req.i2c_read_mode = scenario.rw && !scenario.i3c_mode;
+      cfg_req.i3c_write_tbit_mode =
+        !scenario.rw && scenario.i3c_mode;
+      cfg_req.i2c_write_ack_count =
+        scenario.i2c_write_ack_count;
+      cfg_req.write_parity_error_index =
+        scenario.parity_error_index;
+      cfg_req.read_data = new[scenario.read_data.size()];
+      foreach (scenario.read_data[i])
+        cfg_req.read_data[i] = scenario.read_data[i];
+      configure_target(cfg_req);
+
+      controller_seq = i3c_random_private_seq::type_id::create(
+        $sformatf("controller_seq_%0d", iter)
+      );
+      controller_seq.scenario = scenario;
+      controller_seq.start(p_sequencer.apb_sqr);
+    end
+    idle_target();
+  endtask
+endclass
+
+class i3c_constrained_random_ccc_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_constrained_random_ccc_vseq)
+
+  int unsigned iterations = 20;
+
+  function new(string name = "i3c_constrained_random_ccc_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    for (int iter = 0; iter < iterations; iter++) begin
+      i3c_random_ccc_cfg scenario;
+      i3c_target_txn     cfg_req;
+      i3c_random_ccc_seq controller_seq;
+
+      scenario = i3c_random_ccc_cfg::type_id::create(
+        $sformatf("scenario_%0d", iter)
+      );
+      if (!scenario.randomize())
+        `uvm_fatal(
+          "RAND_CCC",
+          $sformatf("scenario randomization failed at iteration %0d", iter)
+        )
+
+      `uvm_info(
+        "RAND_CCC",
+        $sformatf(
+          "iter=%0d kind=%s len=%0d target_len=%0d bcast_ack=%0b target_ack=%0b cmd_before_tx=%0b",
+          iter,
+          scenario.kind.name(),
+          scenario.command_length,
+          scenario.target_length,
+          scenario.broadcast_ack,
+          scenario.target_ack,
+          scenario.command_before_tx
+        ),
+        UVM_LOW
+      )
+
+      cfg_req = i3c_target_txn::type_id::create(
+        $sformatf("target_cfg_%0d", iter)
+      );
+      cfg_req.op = I3C_TARGET_CONFIG;
+      cfg_req.ccc_ack_enable = scenario.broadcast_ack;
+      cfg_req.ccc_direct_enable =
+        (scenario.kind == I3C_RANDOM_DIRECT_CCC_READ);
+      cfg_req.ack_addr = scenario.target_ack;
+      cfg_req.read_enable =
+        (scenario.kind == I3C_RANDOM_DIRECT_CCC_READ);
+      cfg_req.read_data = new[scenario.read_data.size()];
+      foreach (scenario.read_data[i])
+        cfg_req.read_data[i] = scenario.read_data[i];
+      configure_target(cfg_req);
+
+      controller_seq = i3c_random_ccc_seq::type_id::create(
+        $sformatf("controller_seq_%0d", iter)
+      );
+      controller_seq.scenario = scenario;
+      controller_seq.start(p_sequencer.apb_sqr);
+    end
+    idle_target();
+  endtask
+endclass
+
+class i3c_constrained_random_entdaa_vseq extends i3c_virtual_seq;
+  `uvm_object_utils_begin(i3c_constrained_random_entdaa_vseq)
+    `uvm_field_int(broadcast_ack, UVM_ALL_ON)
+    `uvm_field_int(participate, UVM_ALL_ON)
+    `uvm_field_int(expect_da_ack, UVM_ALL_ON)
+  `uvm_object_utils_end
+
+  rand logic broadcast_ack;
+  rand logic participate;
+  rand logic expect_da_ack;
+
+  constraint c_entdaa_outcome {
+    broadcast_ack dist {1'b1 := 9, 1'b0 := 1};
+    if (!broadcast_ack) {
+      participate == 1'b0;
+      expect_da_ack == 1'b0;
+    }
+    else {
+      participate dist {1'b1 := 4, 1'b0 := 1};
+      if (participate)
+        expect_da_ack dist {1'b1 := 3, 1'b0 := 1};
+      else
+        expect_da_ack == 1'b0;
+    }
+  }
+
+  function new(string name = "i3c_constrained_random_entdaa_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_target_txn        cfg_req;
+    i3c_random_entdaa_seq controller_seq;
+
+    if (!randomize())
+      `uvm_fatal("RAND_ENTDAA", "ENTDAA outcome randomization failed")
+
+    `uvm_info(
+      "RAND_ENTDAA",
+      $sformatf(
+        "broadcast_ack=%0b participate=%0b da_ack=%0b",
+        broadcast_ack,
+        participate,
+        expect_da_ack
+      ),
+      UVM_LOW
+    )
+
+    cfg_req = i3c_target_txn::type_id::create("target_cfg");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ccc_ack_enable = broadcast_ack;
+    cfg_req.entdaa_participate = participate;
+    cfg_req.entdaa_expect_da_ack = expect_da_ack;
+    configure_target(cfg_req);
+
+    controller_seq =
+      i3c_random_entdaa_seq::type_id::create("controller_seq");
+    controller_seq.broadcast_ack = broadcast_ack;
+    controller_seq.participate = participate;
+    controller_seq.expect_da_ack = expect_da_ack;
+    controller_seq.start(p_sequencer.apb_sqr);
+    idle_target();
+  endtask
+endclass
+
+class i3c_constrained_random_ibi_vseq extends i3c_virtual_seq;
+  `uvm_object_utils_begin(i3c_constrained_random_ibi_vseq)
+    `uvm_field_int(has_mdb, UVM_ALL_ON)
+    `uvm_field_int(mdb, UVM_ALL_ON)
+  `uvm_object_utils_end
+
+  rand logic       has_mdb;
+  rand logic [7:0] mdb;
+
+  constraint c_ibi_shape {
+    has_mdb dist {1'b1 := 2, 1'b0 := 1};
+  }
+
+  function new(string name = "i3c_constrained_random_ibi_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    i3c_random_ibi_seq controller_seq;
+    i3c_target_ibi_seq target_seq;
+
+    if (!randomize())
+      `uvm_fatal("RAND_IBI", "IBI randomization failed")
+
+    `uvm_info(
+      "RAND_IBI",
+      $sformatf("has_mdb=%0b mdb=0x%02h", has_mdb, mdb),
+      UVM_LOW
+    )
+
+    controller_seq =
+      i3c_random_ibi_seq::type_id::create("controller_seq");
+    controller_seq.has_mdb = has_mdb;
+    controller_seq.mdb = mdb;
+
+    target_seq = i3c_target_ibi_seq::type_id::create("target_seq");
+    target_seq.addr = 7'h12;
+    target_seq.has_mdb = has_mdb;
+    target_seq.mdb = mdb;
+    target_seq.expect_addr_ack = 1'b1;
+
+    fork
+      controller_seq.start(p_sequencer.apb_sqr);
+      begin
+        controller_seq.target_ready.wait_on();
+        target_seq.start(p_sequencer.target_sqr);
+      end
+    join
+  endtask
+endclass

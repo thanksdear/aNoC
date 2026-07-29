@@ -635,3 +635,114 @@ class i3c_polling_access_test extends i3c_base_test;
     phase.drop_objection(this);
   endtask
 endclass
+
+class i3c_constrained_random_private_test extends i3c_base_test;
+  `uvm_component_utils(i3c_constrained_random_private_test)
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  task run_phase(uvm_phase phase);
+    i3c_constrained_random_private_vseq vseq;
+    int unsigned iterations;
+
+    iterations = 30;
+    void'($value$plusargs("RAND_ITERS=%d", iterations));
+
+    phase.raise_objection(this);
+    reset_dut();
+    vseq =
+      i3c_constrained_random_private_vseq::type_id::create("vseq");
+    vseq.iterations = iterations;
+    run_virtual_seq(vseq);
+    repeat (20) @(posedge vif.clk);
+    phase.drop_objection(this);
+  endtask
+endclass
+
+class i3c_constrained_random_apb_test extends i3c_base_test;
+  `uvm_component_utils(i3c_constrained_random_apb_test)
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  task run_phase(uvm_phase phase);
+    i3c_constrained_random_apb_seq seq;
+    int unsigned iterations;
+
+    iterations = 40;
+    void'($value$plusargs("RAND_ITERS=%d", iterations));
+
+    phase.raise_objection(this);
+    reset_dut();
+    seq = i3c_constrained_random_apb_seq::type_id::create("seq");
+    seq.iterations = iterations;
+    run_i3c_seq(seq);
+    repeat (20) @(posedge vif.clk);
+    phase.drop_objection(this);
+  endtask
+endclass
+
+class i3c_constrained_random_ccc_test extends i3c_base_test;
+  `uvm_component_utils(i3c_constrained_random_ccc_test)
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  task run_phase(uvm_phase phase);
+    i3c_constrained_random_ccc_vseq vseq;
+    int unsigned iterations;
+
+    iterations = 20;
+    void'($value$plusargs("RAND_ITERS=%d", iterations));
+
+    phase.raise_objection(this);
+    reset_dut();
+    vseq = i3c_constrained_random_ccc_vseq::type_id::create("vseq");
+    vseq.iterations = iterations;
+    run_virtual_seq(vseq);
+    repeat (20) @(posedge vif.clk);
+    phase.drop_objection(this);
+  endtask
+endclass
+
+class i3c_constrained_random_management_test extends i3c_base_test;
+  `uvm_component_utils(i3c_constrained_random_management_test)
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  task run_phase(uvm_phase phase);
+    int unsigned iterations;
+
+    iterations = 12;
+    void'($value$plusargs("RAND_ITERS=%d", iterations));
+
+    phase.raise_objection(this);
+    for (int iter = 0; iter < iterations; iter++) begin
+      reset_dut();
+      if ($urandom_range(2, 0) == 0) begin
+        i3c_constrained_random_ibi_vseq ibi_vseq;
+        ibi_vseq =
+          i3c_constrained_random_ibi_vseq::type_id::create(
+            $sformatf("ibi_vseq_%0d", iter)
+          );
+        run_virtual_seq(ibi_vseq);
+      end
+      else begin
+        i3c_constrained_random_entdaa_vseq entdaa_vseq;
+        entdaa_vseq =
+          i3c_constrained_random_entdaa_vseq::type_id::create(
+            $sformatf("entdaa_vseq_%0d", iter)
+          );
+        run_virtual_seq(entdaa_vseq);
+      end
+      repeat (10) @(posedge vif.clk);
+    end
+    phase.drop_objection(this);
+  endtask
+endclass

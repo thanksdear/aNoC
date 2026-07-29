@@ -5,6 +5,13 @@ TOP      ?= top
 TEST     ?= i3c_base_test
 COV_DB   ?= verisim.zdb
 LOG_DIR  ?= log
+RAND_TESTS ?= \
+	i3c_constrained_random_apb_test \
+	i3c_constrained_random_private_test \
+	i3c_constrained_random_ccc_test \
+	i3c_constrained_random_management_test
+RAND_SEEDS ?= 1 2 3 4 5
+RAND_ITERS ?= 25
 REGRESSION_TESTS ?= \
 	i3c_base_test \
 	i3c_apb_reg_access_test \
@@ -38,7 +45,11 @@ REGRESSION_TESTS ?= \
 	i3c_ibi_no_payload_test \
 	i3c_ibi_payload_test \
 	i3c_irq_access_test \
-	i3c_polling_access_test
+	i3c_polling_access_test \
+	i3c_constrained_random_apb_test \
+	i3c_constrained_random_private_test \
+	i3c_constrained_random_ccc_test \
+	i3c_constrained_random_management_test
 
 UVM_PKG := $(UVM_HOME)/src/uvm_pkg.sv
 UVM_DPI := $(UVM_HOME)/src/dpi/libuvm_dpi.so
@@ -47,7 +58,7 @@ VERISIM_FLAGS := -j 8 -linebuf -all-class-spec +acc+b -code-cov all +incdir+$(UV
 RUN_FLAGS     ?= -write-sql
 VERICOV_FLAGS := -report -text -out $(LOG_DIR)/cov.txt $(COV_DB)
 
-.PHONY: all compile run regress cov clean
+.PHONY: all compile run regress random-regress cov clean
 
 all: compile run
 
@@ -65,6 +76,18 @@ regress: compile
 	@for test in $(REGRESSION_TESTS); do \
 		echo "===== RUN $$test ====="; \
 		verisim -image $(IMAGE) -sv_lib $(UVM_DPI) $(RUN_FLAGS) +UVM_TESTNAME=$$test -l $(LOG_DIR)/$$test.log || exit $$?; \
+	done
+
+random-regress: compile
+	@mkdir -p $(LOG_DIR)
+	@for seed in $(RAND_SEEDS); do \
+		for test in $(RAND_TESTS); do \
+			echo "===== RANDOM RUN $$test SEED=$$seed ====="; \
+			verisim -image $(IMAGE) -sv_lib $(UVM_DPI) $(RUN_FLAGS) \
+				+UVM_TESTNAME=$$test +ntb_random_seed=$$seed \
+				+RAND_ITERS=$(RAND_ITERS) \
+				-l $(LOG_DIR)/$${test}_seed_$${seed}.log || exit $$?; \
+		done; \
 	done
 
 cov:

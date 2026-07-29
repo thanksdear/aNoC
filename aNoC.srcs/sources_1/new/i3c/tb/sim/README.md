@@ -38,6 +38,8 @@ make run TEST=i3c_direct_ccc_test
 make run TEST=i3c_entdaa_test
 make run TEST=i3c_entdaa_da_nack_test
 make run TEST=i3c_ibi_payload_test
+make run TEST=i3c_constrained_random_private_test \
+  RUN_FLAGS="-write-sql +ntb_random_seed=1 +RAND_ITERS=30"
 make run TEST=i3c_full_feature_test
 ```
 
@@ -50,6 +52,19 @@ make regress
 ```
 
 该命令会先执行 `make compile`，然后依次运行 `REGRESSION_TESTS` 中列出的测试。
+
+运行APB、Private、CCC及ENTDAA/IBI四类受约束随机测试的多seed回归：
+
+```sh
+make random-regress RAND_SEEDS="1 2 3 4 5" RAND_ITERS=25
+```
+
+失败场景可使用日志文件名中的seed单独复现：
+
+```sh
+make run TEST=i3c_constrained_random_ccc_test \
+  RUN_FLAGS="-write-sql +ntb_random_seed=3 +RAND_ITERS=25"
+```
 
 注意：当前 `REGRESSION_TESTS` 不包含 `i3c_full_feature_test`。如果要跑全功能测试，需要单独执行：
 
@@ -92,6 +107,7 @@ make run TEST=i3c_entdaa_test
 
 ```sh
 make regress
+```
 
 跑全功能覆盖率：
 
@@ -100,4 +116,3 @@ make compile
 make run TEST=i3c_full_feature_test
 make cov
 ```
-
