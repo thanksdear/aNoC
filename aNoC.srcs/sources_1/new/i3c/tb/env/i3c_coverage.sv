@@ -307,7 +307,8 @@ class i3c_bus_coverage extends uvm_subscriber #(i3c_bus_txn);
     option.per_instance = 1;
 
     cp_kind: coverpoint kind_s {
-      bins tr_kind_unknown   = {I3C_KIND_UNKNOWN};
+      // UNKNOWN is a monitor diagnostic, not a legal transfer kind.
+      ignore_bins tr_kind_unknown = {I3C_KIND_UNKNOWN};
       bins tr_kind_private   = {I3C_KIND_PRIVATE};
       bins tr_kind_broadcast = {I3C_KIND_BROADCAST_CCC};
       bins tr_kind_direct    = {I3C_KIND_DIRECT_CCC};
@@ -316,27 +317,31 @@ class i3c_bus_coverage extends uvm_subscriber #(i3c_bus_txn);
     }
 
     cp_origin: coverpoint origin_s {
-      bins tr_origin_unknown    = {I3C_ORIGIN_UNKNOWN};
+      // Every supported transfer has a known controller/target initiator.
+      ignore_bins tr_origin_unknown = {I3C_ORIGIN_UNKNOWN};
       bins tr_origin_controller = {I3C_ORIGIN_CONTROLLER};
       bins tr_origin_target     = {I3C_ORIGIN_TARGET};
     }
 
     cp_segment_count: coverpoint segment_count_s {
-      bins tr_seg_count_empty = {0};
+      // Legal implemented shapes contain one segment, or two for Direct CCC.
+      ignore_bins tr_seg_count_empty = {0};
       bins tr_seg_count_one   = {1};
       bins tr_seg_count_two   = {2};
-      bins tr_seg_count_many  = default;
+      // Counts of three or more are outside the implemented transfer shapes
+      // and intentionally have no coverage bin.
     }
 
     cp_entdaa_round_count: coverpoint entdaa_round_count_s {
       bins tr_entdaa_round_none   = {0};
       bins tr_entdaa_round_one    = {1};
       bins tr_entdaa_round_two    = {2};
-      bins tr_entdaa_round_many   = default;
+      // The active target environment intentionally models one target.
+      // Counts of three or more intentionally have no coverage bin.
     }
 
     cp_has_start: coverpoint has_start_s {
-      bins tr_start_absent  = {0};
+      ignore_bins tr_start_absent = {0};
       bins tr_start_present = {1};
     }
 
@@ -346,26 +351,23 @@ class i3c_bus_coverage extends uvm_subscriber #(i3c_bus_txn);
     }
 
     cp_has_stop: coverpoint has_stop_s {
-      bins tr_stop_absent  = {0};
+      ignore_bins tr_stop_absent = {0};
       bins tr_stop_present = {1};
     }
 
     cp_null_segment: coverpoint has_null_segment_s {
       bins tr_null_segment_none = {0};
-      bins tr_null_segment_seen = {1};
+      ignore_bins tr_null_segment_seen = {1};
     }
 
     cp_incomplete_header: coverpoint has_incomplete_header_s {
       bins tr_incomplete_header_none = {0};
-      bins tr_incomplete_header_seen = {1};
+      ignore_bins tr_incomplete_header_seen = {1};
     }
 
     // Legal initiation combinations.  IBI is target initiated; all currently
     // supported controller commands are controller initiated.
     x_kind_origin: cross cp_kind, cp_origin {
-      ignore_bins unknown =
-        binsof(cp_kind.tr_kind_unknown) ||
-        binsof(cp_origin.tr_origin_unknown);
       ignore_bins controller_ibi =
         binsof(cp_kind.tr_kind_ibi) &&
         binsof(cp_origin.tr_origin_controller);
@@ -380,7 +382,6 @@ class i3c_bus_coverage extends uvm_subscriber #(i3c_bus_txn);
     // Private, broadcast and target-initiated IBI transfers end without Sr.
     // Direct CCC and ENTDAA use repeated START in the implemented flows.
     x_kind_restart: cross cp_kind, cp_has_restart {
-      ignore_bins unknown = binsof(cp_kind.tr_kind_unknown);
       ignore_bins private_with_restart =
         binsof(cp_kind.tr_kind_private) &&
         binsof(cp_has_restart.tr_restart_present);
