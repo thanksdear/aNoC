@@ -4,8 +4,13 @@ class i3c_env extends uvm_env;
 
   i3c_agent agt;
   i3c_target_agent tgt;
-  i3c_sb    sb;
   i3c_coverage cov;
+  virtual i3c_if vif;
+
+  i3c_reg_block     ral;
+  i3c_reg_adapter   ral_adapter;
+  i3c_reg_apb_filter ral_filter;
+  uvm_reg_predictor #(i3c_txn) ral_predictor;
 
   i3c_bus_agent      bus_agt;
   i3c_virtual_sequencer vseqr;
@@ -19,9 +24,22 @@ class i3c_env extends uvm_env;
 
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
+    if (!uvm_config_db#(virtual i3c_if)::get(this, "", "vif", vif))
+      `uvm_fatal("ENV", "cannot get vif")
+
+    ral = i3c_reg_block::type_id::create("ral");
+    ral.build();
+    ral.lock_model();
+    ral.reset("HARD");
+    ral_adapter =
+      i3c_reg_adapter::type_id::create("ral_adapter");
+    ral_filter =
+      i3c_reg_apb_filter::type_id::create("ral_filter", this);
+    ral_predictor =
+      new("ral_predictor", this);
+
     agt = i3c_agent::type_id::create("agt", this);
     tgt = i3c_target_agent::type_id::create("tgt", this);
-    sb  = i3c_sb::type_id::create("sb", this);
     cov = i3c_coverage::type_id::create("cov",this);
 
     bus_agt = i3c_bus_agent::type_id::create("bus_agt", this);
@@ -33,8 +51,17 @@ class i3c_env extends uvm_env;
 
   function void connect_phase(uvm_phase phase);
     super.connect_phase(phase);
-    agt.mon.ap.connect(sb.ain);    // monitor 广播 → scoreboard 接收(从 test 搬来)
     agt.mon.ap.connect(cov.analysis_export);
+
+    // RAL frontdoor traffic uses the active APB agent.  The APB monitor, not
+    // the initiating sequence, updates the mirror so direct APB accesses and
+    // RAL accesses share one prediction path.
+    ral.default_map.set_sequencer(agt.sqr, ral_adapter);
+    ral.default_map.set_auto_predict(0);
+    ral_predictor.map = ral.default_map;
+    ral_predictor.adapter = ral_adapter;
+    agt.mon.ap.connect(ral_filter.bus_in);
+    ral_filter.csr_ap.connect(ral_predictor.bus_in);
     
     // APB programming and the independent target response plan are combined
     // by the predictor before the passive bus result is compared.
@@ -56,6 +83,13 @@ class i3c_env extends uvm_env;
     vseqr.apb_sqr = agt.sqr;
     vseqr.target_sqr = tgt.sqr;
   endfunction
+
+  task run_phase(uvm_phase phase);
+    forever begin
+      @(negedge vif.rst_n);
+      ral.reset("HARD");
+    end
+  endtask
   
   function void end_of_elaboration_phase(uvm_phase phase);
       // 2. 检查所有 analysis_port 和 imp 之间的连接（如果有端口没连上，会报 WARNING/ERROR）

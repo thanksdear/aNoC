@@ -2,12 +2,18 @@ class i3c_virtual_seq extends uvm_sequence;
   `uvm_object_utils(i3c_virtual_seq)
   `uvm_declare_p_sequencer(i3c_virtual_sequencer)
 
+  virtual i3c_if vif;
+
   function new(string name = "i3c_virtual_seq");
     super.new(name);
   endfunction
 
   task pre_body();
     super.pre_body();
+    if (vif == null) begin
+      if (!uvm_config_db#(virtual i3c_if)::get(null, "*", "vif", vif))
+        `uvm_fatal("VSEQ", "virtual sequence cannot get vif")
+    end
     if (p_sequencer.apb_sqr == null)
       `uvm_fatal("VSEQ", "virtual sequencer APB handle is null")
     if (p_sequencer.target_sqr == null)
@@ -1178,5 +1184,172 @@ class i3c_constrained_random_ibi_vseq extends i3c_virtual_seq;
         target_seq.start(p_sequencer.target_sqr);
       end
     join
+  endtask
+endclass
+
+class i3c_ral_access_vseq extends i3c_virtual_seq;
+  `uvm_object_utils(i3c_ral_access_vseq)
+
+  i3c_reg_block ral;
+
+  function new(string name = "i3c_ral_access_vseq");
+    super.new(name);
+  endfunction
+
+  task ral_read_check(
+    string         check_name,
+    uvm_reg        rg,
+    uvm_reg_data_t expected,
+    uvm_reg_data_t mask = '1
+  );
+    uvm_status_e   status;
+    uvm_reg_data_t value;
+
+    rg.read(
+      status,
+      value,
+      UVM_FRONTDOOR,
+      ral.default_map,
+      this
+    );
+    if (status != UVM_IS_OK)
+      `uvm_error(
+        "RAL",
+        $sformatf("%s frontdoor read returned %s",
+                  check_name, status.name())
+      )
+    else if ((value & mask) !== (expected & mask))
+      `uvm_error(
+        "RAL",
+        $sformatf(
+          "%s mismatch: got=0x%08h expected=0x%08h mask=0x%08h",
+          check_name,
+          value,
+          expected,
+          mask
+        )
+      )
+    else
+      `uvm_info(
+        "RAL",
+        $sformatf("%s PASS: 0x%08h", check_name, value & mask),
+        UVM_LOW
+      )
+
+    if ((rg.get_mirrored_value() & mask) !== (value & mask))
+      `uvm_error(
+        "RAL",
+        $sformatf(
+          "%s mirror mismatch: mirror=0x%08h frontdoor=0x%08h",
+          check_name,
+          rg.get_mirrored_value(),
+          value
+        )
+      )
+  endtask
+
+  task ral_write(
+    string         operation_name,
+    uvm_reg        rg,
+    uvm_reg_data_t value
+  );
+    uvm_status_e status;
+
+    rg.write(
+      status,
+      value,
+      UVM_FRONTDOOR,
+      ral.default_map,
+      this
+    );
+    if (status != UVM_IS_OK)
+      `uvm_error(
+        "RAL",
+        $sformatf("%s frontdoor write returned %s",
+                  operation_name, status.name())
+      )
+  endtask
+
+  task body();
+    i3c_target_txn           cfg_req;
+    i3c_ral_nack_trigger_seq nack_seq;
+
+    if (ral == null)
+      `uvm_fatal("RAL", "register model handle is null")
+
+    // Hard-reset values and volatile status fields.
+    ral_read_check(
+      "BUS_TIMING_0 reset",
+      ral.bus_timing_0,
+      32'h0006_0006
+    );
+    ral_read_check(
+      "BUS_TIMING_1 reset",
+      ral.bus_timing_1,
+      32'h0000_0002,
+      32'h0000_ffff
+    );
+    ral_read_check("CTRL reset", ral.ctrl, 32'h0000_0001, 32'h1f);
+    ral_read_check("STATUS idle", ral.status, 32'h0, 32'h3);
+    ral_read_check("IBI_STATUS reset", ral.ibi_status, 32'h0, 32'h1ffff);
+    ral_read_check("ERR_STATUS reset", ral.err_status, 32'h0, 32'h3);
+    ral_read_check(
+      "ENTDAA_STATUS reset",
+      ral.entdaa_status,
+      32'h0,
+      32'h1ff
+    );
+    ral_read_check("ENTDAA_PID_LO reset", ral.entdaa_pid_lo, 32'h0);
+    ral_read_check("ENTDAA_PID_HI reset", ral.entdaa_pid_hi, 32'h0);
+
+    // Normal RW frontdoor accesses.
+    ral_write(
+      "BUS_TIMING_0 write",
+      ral.bus_timing_0,
+      32'h0007_0005
+    );
+    ral_read_check(
+      "BUS_TIMING_0 readback",
+      ral.bus_timing_0,
+      32'h0007_0005
+    );
+    ral_write(
+      "BUS_TIMING_1 write",
+      ral.bus_timing_1,
+      32'h0000_0003
+    );
+    ral_read_check(
+      "BUS_TIMING_1 readback",
+      ral.bus_timing_1,
+      32'h0000_0003,
+      32'h0000_ffff
+    );
+    ral_write("CTRL enable write", ral.ctrl, 32'h0000_0003);
+    ral_read_check("CTRL enable readback", ral.ctrl, 32'h3, 32'h1f);
+
+    // Produce a hardware-set volatile error, then clear it through W1C RAL.
+    cfg_req = i3c_target_txn::type_id::create("nack_target_cfg");
+    cfg_req.op = I3C_TARGET_CONFIG;
+    cfg_req.ack_addr = 1'b0;
+    configure_target(cfg_req);
+    nack_seq =
+      i3c_ral_nack_trigger_seq::type_id::create("nack_seq");
+    nack_seq.start(p_sequencer.apb_sqr);
+
+    ral_read_check("ERR_STATUS hardware NACK", ral.err_status, 32'h2, 32'h3);
+    ral_write("ERR_STATUS W1C", ral.err_status, 32'h2);
+    ral_read_check("ERR_STATUS cleared", ral.err_status, 32'h0, 32'h3);
+
+    // sw_rst reads back as zero while the other CTRL configuration survives.
+    ral_write("CTRL software reset", ral.ctrl, 32'h0000_0007);
+    repeat (4) @(posedge vif.clk);
+    ral_read_check(
+      "CTRL software reset self clear",
+      ral.ctrl,
+      32'h0000_0003,
+      32'h0000_001f
+    );
+
+    idle_target();
   endtask
 endclass

@@ -1,21 +1,20 @@
 // =============================================================================
 // 本文件阅读指南
 // =============================================================================
-// 这个文件不只有一个 scoreboard，而是依次放了四类内容：
+// 这个文件依次放了三类内容：
 //
-//   1. i3c_sb
-//      简单的 APB 寄存器镜像 scoreboard，只检查 BUS_TIMING/CTRL 等 CSR。
-//
-//   2. i3c_expected_entdaa_round / i3c_expected_op
+//   1. i3c_expected_entdaa_round / i3c_expected_op
 //      “预期结果”的数据结构。它们描述命令执行后，总线上应该出现什么。
 //
-//   3. i3c_cmd_predictor
+//   2. i3c_cmd_predictor
 //      预测器。它把 APB monitor 观察到的软件命令，以及 target model 发布的
 //      响应计划（是否 ACK、读回哪些数据等）组合成 i3c_expected_op。
 //
-//   4. i3c_bus_scoreboard
+//   3. i3c_bus_scoreboard
 //      I3C 协议 scoreboard。它把 predictor 给出的 expected 与 SCL/SDA bus
 //      monitor 给出的 actual 逐项比较，同时检查 RX_PORT 的 APB 读回值。
+//
+// CSR 的地址、访问属性和镜像预测由 i3c_reg_model.sv 中的 RAL 模型负责。
 //
 // 最重要的数据流如下：
 //
@@ -39,172 +38,6 @@
 //   -> expected_ap.write() -> process_bus() -> compare_private()
 // CCC、ENTDAA、IBI 分支可以等 private read/write 看懂后再读。
 // =============================================================================
-
-// -----------------------------------------------------------------------------
-// APB 寄存器 scoreboard
-// -----------------------------------------------------------------------------
-// 这个类只负责少量 CSR 的“写入后读回”检查，不检查 SCL/SDA 协议。
-// 它的输入来自 APB monitor：agt.mon.ap -> sb.ain。
-// 因为 ain 是 uvm_analysis_imp，monitor 每次 ap.write(tr) 时会直接回调本类的
-// write(tr)，这里不需要再建立 FIFO 或在 run_phase 中 get()。
-class i3c_sb extends uvm_scoreboard;
-  `uvm_component_utils(i3c_sb)
-
-  localparam bit [7:0] REG_BUS_TIMING_0 = 8'h00;
-  localparam bit [7:0] REG_BUS_TIMING_1 = 8'h04;
-  localparam bit [7:0] REG_CTRL         = 8'h08;
-
-  virtual i3c_if vif;
-
-  // APB monitor 的接收入口。收到的 i3c_txn 表示一次已经完成的 APB 读/写。
-  uvm_analysis_imp #(i3c_txn, i3c_sb) ain;
-
-  // CSR 参考模型。地址按 32-bit 字索引，所以使用 addr[5:2] 访问。
-  bit [31:0] ref_q[16];
-  // 标记某个槽位是否已有有效参考值，避免拿未建模寄存器进行比较。
-  bit        written[16];
-  // 这里只统计 APB 寄存器读回比较的结果，不是整个测试的 UVM 错误总数。
-  int        n_pass;
-  int        n_fail;
-
-  function new(string name, uvm_component parent);
-    super.new(name, parent);
-    ain = new("ain", this);
-  endfunction
-
-  function void build_phase(uvm_phase phase);
-    super.build_phase(phase);
-    if (!uvm_config_db#(virtual i3c_if)::get(this, "", "vif", vif))
-      `uvm_fatal("SB", "cannot get vif")
-    reset_model();
-  endfunction
-
-  // 将软件参考模型恢复到 DUT 的硬复位默认值。
-  // 注意：这只是清空/重建 scoreboard 内部模型，不会驱动 DUT 复位。
-  function void reset_model();
-    for (int i = 0; i < 16; i++) begin
-      ref_q[i]  = '0;
-      written[i] = 1'b0;
-    end
-
-    // 必须与 RTL csr_regs 的硬复位默认值保持一致。
-    ref_q[REG_BUS_TIMING_0[5:2]] = {16'd6, 16'd6};
-    ref_q[REG_BUS_TIMING_1[5:2]] = 32'd2;
-    ref_q[REG_CTRL[5:2]]         = 32'h0000_0001;
-    written[REG_BUS_TIMING_0[5:2]] = 1'b1;
-    written[REG_BUS_TIMING_1[5:2]] = 1'b1;
-    written[REG_CTRL[5:2]]         = 1'b1;
-  endfunction
-
-  // 被动监听硬复位边沿。检测到 rst_n 下降后，重新初始化 CSR 参考模型。
-  task run_phase(uvm_phase phase);
-    forever begin
-      @(negedge vif.rst_n);
-      reset_model();
-    end
-  endtask
-
-  // 当前只镜像三个可稳定读回的配置寄存器；FIFO/状态寄存器由其他逻辑检查。
-  function bit is_mirror_reg(bit [7:0] addr);
-    return (addr == REG_BUS_TIMING_0) ||
-           (addr == REG_BUS_TIMING_1) ||
-           (addr == REG_CTRL);
-  endfunction
-
-  // 某些 CSR 只有部分位可读或有意义，因此读比较前必须使用掩码。
-  // 掩码为 0 的位既不判对，也不判错。
-  function bit [31:0] read_mask(bit [7:0] addr);
-    case (addr)
-      REG_BUS_TIMING_0: return 32'hffff_ffff;
-      REG_BUS_TIMING_1: return 32'h0000_ffff;
-      REG_CTRL:         return 32'h0000_001f;
-      default:          return 32'h0000_0000;
-    endcase
-  endfunction
-
-  // uvm_analysis_imp 的回调函数：APB monitor 广播一笔事务时自动进入这里。
-  // 写操作更新参考模型；读操作将 DUT 读回值与参考模型进行带掩码比较。
-  function void write(i3c_txn tr);
-    int        idx;
-    bit [31:0] mask;
-    bit [31:0] exp;
-
-    if (!is_mirror_reg(tr.addr))
-      return;
-
-    // APB 地址按字节编址，而每个 CSR 占 4 byte，所以去掉低两位。
-    idx = tr.addr[5:2];
-    if (tr.op == WR) begin
-      // pstrb 的每一位控制一个 byte，只更新本次真正写入的 byte lane。
-      for (int i = 0; i < 4; i++) begin
-        if (tr.strb[i]) begin
-          ref_q[idx][i*8 +: 8] = tr.data[i*8 +: 8];
-          `uvm_info(
-            "SB",
-            $sformatf(
-              "WRITE 0x%02h to addr 0x%02h",
-              tr.data[i*8 +: 8],
-              tr.addr + i
-            ),
-            UVM_MEDIUM
-          )
-        end
-      end
-
-      // CTRL.sw_rst 是自清零脉冲。软件即使写入 1，之后读回也应为 0，
-      // 所以参考模型不能长期保存写入的 1。
-      if (tr.addr == REG_CTRL)
-        ref_q[idx][2] = 1'b0;
-      written[idx] = 1'b1;
-    end
-    else begin
-      // 尚未建模的寄存器不在这个简单 scoreboard 中比较。
-      if (!written[idx])
-        return;
-
-      exp  = ref_q[idx];
-      mask = read_mask(tr.addr);
-      if ((tr.data & mask) === (exp & mask)) begin
-        `uvm_info(
-          "SB",
-          $sformatf(
-            "addr 0x%02h: 0x%08h == 0x%08h mask 0x%08h match",
-            tr.addr,
-            tr.data,
-            exp,
-            mask
-          ),
-          UVM_MEDIUM
-        )
-        n_pass++;
-      end
-      else begin
-        `uvm_error(
-          "SB",
-          $sformatf(
-            "addr 0x%02h: 0x%08h != 0x%08h mask 0x%08h",
-            tr.addr,
-            tr.data,
-            exp,
-            mask
-          )
-        )
-        n_fail++;
-      end
-    end
-  endfunction
-
-  // 仿真结束时汇总本类做过的 CSR 读回比较次数。
-  function void report_phase(uvm_phase phase);
-    super.report_phase(phase);
-    `uvm_info(
-      "SB",
-      $sformatf("finish: pass %0d, fail %0d", n_pass, n_fail),
-      UVM_MEDIUM
-    )
-  endfunction
-endclass
-
 
 // -----------------------------------------------------------------------------
 // 一轮成功 ENTDAA 仲裁的“预期结果”
@@ -958,8 +791,8 @@ endclass
 // -----------------------------------------------------------------------------
 // I3C 总线协议 scoreboard
 // -----------------------------------------------------------------------------
-// 这是本文件中真正检查 SCL/SDA 协议的 scoreboard，与前面的 CSR 镜像 i3c_sb
-// 是两个不同组件。核心工作是把下面两条独立路径按事务发生顺序一一配对：
+// 这个 scoreboard 负责检查 SCL/SDA 协议，核心工作是把下面两条独立路径
+// 按事务发生顺序一一配对：
 //
 //   expected_fifo：predictor 根据 APB 命令 + target plan 生成“应该发生什么”
 //   bus_fifo     ：bus monitor 根据 SCL/SDA 解码得到“实际发生了什么”

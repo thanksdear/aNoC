@@ -12,6 +12,26 @@ class i3c_apb_reg_access_test extends i3c_base_test;
   endtask
 endclass
 
+class i3c_ral_access_test extends i3c_base_test;
+  `uvm_component_utils(i3c_ral_access_test)
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  task run_phase(uvm_phase phase);
+    i3c_ral_access_vseq vseq;
+
+    phase.raise_objection(this);
+    reset_dut();
+    vseq = i3c_ral_access_vseq::type_id::create("vseq");
+    vseq.ral = env.ral;
+    run_virtual_seq(vseq);
+    repeat (20) @(posedge vif.clk);
+    phase.drop_objection(this);
+  endtask
+endclass
+
 class i3c_bus_timing_test extends i3c_base_test;
   `uvm_component_utils(i3c_bus_timing_test)
   function new(string name, uvm_component parent); super.new(name, parent); endfunction

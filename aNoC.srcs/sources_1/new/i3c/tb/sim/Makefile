@@ -15,6 +15,7 @@ RAND_ITERS ?= 25
 REGRESSION_TESTS ?= \
 	i3c_base_test \
 	i3c_apb_reg_access_test \
+	i3c_ral_access_test \
 	i3c_apb_strb_test \
 	i3c_bus_timing_test \
 	i3c_bus_timing_sweep_test \

@@ -1977,3 +1977,32 @@ class i3c_constrained_random_apb_seq extends i3c_seq;
     end
   endtask
 endclass
+
+// Generate a real protocol NACK but leave ERR_STATUS uncleared so the RAL
+// sequence can verify the volatile W1C field through its frontdoor.
+class i3c_ral_nack_trigger_seq extends i3c_seq;
+  `uvm_object_utils(i3c_ral_nack_trigger_seq)
+
+  function new(string name = "i3c_ral_nack_trigger_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    bit [31:0] rdata;
+
+    cfg_i3c_mode();
+    send_apb(
+      WR,
+      CMD_PORT,
+      private_cmd(SLAVE_ADDR, 1'b0, 8'd0)
+    );
+    wait_status_idle();
+    apb_read(RESP_PORT, rdata);
+    expect_eq(
+      "RAL NACK trigger response",
+      rdata,
+      32'h0000_0002,
+      32'h0000_0003
+    );
+  endtask
+endclass

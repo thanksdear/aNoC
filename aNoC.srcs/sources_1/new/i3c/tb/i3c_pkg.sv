@@ -7,6 +7,7 @@ package i3c_pkg;
    `include "env/i3c_agent/i3c_driver.sv"
    `include "env/i3c_agent/i3c_monitor.sv"
    `include "env/i3c_agent/i3c_agent.sv"
+   `include "env/i3c_reg_model.sv"
 
   // I3C bus passive agent
    `include "env/i3c_bus_agent/i3c_bus_txn.sv"
