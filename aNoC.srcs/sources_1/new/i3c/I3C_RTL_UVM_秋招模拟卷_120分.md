@@ -21,7 +21,7 @@
 
 ### 1. Command descriptor 计算
 
-软件希望发起一笔 I3C private write，目标地址为 `7'h12`，长度为 2 byte。根据本项目 command descriptor 定义，写入 `CMD_PORT` 的值应为：
+软件希望发起一笔 I3C private write，目标地址为 `7'h12`，长度为 2 byte。根据本项目 command descriptor 定义，写入 `CMD_PORT` 的值应为：C
 
 A. `32'h0202_4000`  
 B. `32'h0224_0000`  
@@ -30,7 +30,7 @@ D. `32'h0248_0000`
 
 ### 2. 地址 NACK 后的 RTL 行为
 
-`frame_scheduler` 在地址阶段完成后检测到 `ser_ack_ok==0`，正确行为是：
+`frame_scheduler` 在地址阶段完成后检测到 `ser_ack_ok==0`，正确行为是：C
 
 A. 继续发送全部 payload，最后再置位错误  
 B. 立即回到 `S_IDLE`，不产生 STOP  
@@ -39,7 +39,7 @@ D. 清空全部 FIFO，并产生硬复位
 
 ### 3. I3C SDR write 的第九位
 
-本项目发送 I3C SDR write 数据 `8'hA5` 时，正确的 odd-parity T-bit 为：
+本项目发送 I3C SDR write 数据 `8'hA5` 时，正确的 odd-parity T-bit 为：B
 
 A. `0`，由 target 驱动  
 B. `1`，由 controller 驱动  
@@ -48,7 +48,7 @@ D. `1`，由 target 驱动
 
 ### 4. 软件复位语义
 
-关于本项目 `CTRL.sw_rst`，下列说法正确的是：
+关于本项目 `CTRL.sw_rst`，下列说法正确的是：A
 
 A. 软件复位会清除包括 CTRL、BUS_TIMING 在内的所有 CSR  
 B. `sw_rst` 是粘滞位，必须由软件再次写 0 清除  
@@ -66,18 +66,18 @@ PWDATA = 32'hA1B2_C3D4
 PSTRB  = 4'b0101
 ```
 
-写入后的 `BUS_TIMING_0` 为 `32'h________`。
+写入后的 `BUS_TIMING_0` 为 `32'00B2_00D4`。
 
 ### 6. 同步 FIFO
 
-本项目 `sync_fifo` 深度为 `DEPTH`，读写指针均比地址位多 1 位。当读写指针的低地址位相等且最高位________时，FIFO 为 full；当完整读写指针________时，FIFO 为 empty。
+本项目 `sync_fifo` 深度为 `DEPTH`，读写指针均比地址位多 1 位。当读写指针的低地址位相等且最高位__相反____时，FIFO 为 full；当完整读写指针___相同_____时，FIFO 为 empty。
 
 ### 7. Direct CCC 帧结构
 
 补全本项目 Direct CCC 的总线结构：
 
 ```text
-START → 7E/W → ACK → CCC_CODE → T → ________
+START → 7E/W → ACK → CCC_CODE → T → _Repeat Start_
       → {Target_DA, R/W} → ACK → Payload → STOP
 ```
 
@@ -88,8 +88,16 @@ START → 7E/W → ACK → CCC_CODE → T → ________
 软件先向 `CMD_PORT` 写入一条长度为 2 的 private write 命令，此时 TX FIFO 为空；若地址被 target ACK，回答：
 
 1. `frame_scheduler` 会停在哪一类状态，`hw_busy` 为什么仍为 1？（2 分）
+   
+   frame会停在ADDR的状态，因为fifo里面没有数据
+
 2. TX 数据到达后，传输如何继续？（2 分）
+   
+   TX数据到达后，会持续发送写数据，写完后，发射stop信号，并结束传输
+
 3. 如果 testbench 必须等 `target_dbg_ack_phase` 从 1 变回 0 后才写第一笔 TX，为什么可能形成环形等待？（2 分）
+   
+   这个不知道。
 
 ---
 
@@ -99,7 +107,7 @@ START → 7E/W → ACK → CCC_CODE → T → ________
 
 ### 9. UVM object 与 component
 
-下列说法正确的是：
+下列说法正确的是：B
 
 A. `uvm_sequence_item` 有层次结构并自动执行 `run_phase`  
 B. `uvm_component` 参与层次结构和 phase，`uvm_object` 通常不参与  
@@ -108,7 +116,7 @@ D. factory 只能创建 component，不能创建 object
 
 ### 10. Analysis port
 
-关于 `uvm_analysis_port`，正确的是：
+关于 `uvm_analysis_port`，正确的是：C
 
 A. 只能连接一个 subscriber  
 B. `write()` 自带 ready/valid 反压  
@@ -117,7 +125,7 @@ D. 只能在 `run_phase` 中连接
 
 ### 11. Objection
 
-若 test 在 `run_phase` 中启动 sequence，却没有 raise objection，最可能出现：
+若 test 在 `run_phase` 中启动 sequence，却没有 raise objection，最可能出现：A
 
 A. factory 注册失败  
 B. run phase 可能过早结束，激励和 checker 尚未完成  
@@ -126,7 +134,7 @@ D. transaction 随机化失败
 
 ### 12. Expected/actual 独立性
 
-本项目检查 private read 时，最合理的 expected 数据来源是：
+本项目检查 private read 时，最合理的 expected 数据来源是：C
 
 A. 直接复制 bus monitor 解码出的 `actual.data`  
 B. 从 DUT 的 RX FIFO 层次路径读取  
@@ -135,7 +143,7 @@ D. 从波形中人工抄录
 
 ### 13. 第九位建模
 
-为什么 `i3c_bus_monitor` 将第九位保存成原始 `data_ninth_bits[]`，而不是统一命名为 ACK？
+为什么 `i3c_bus_monitor` 将第九位保存成原始 `data_ninth_bits[]`，而不是统一命名为 ACK？B
 
 A. UVM 不支持 ACK 类型  
 B. 第九位可能是地址 ACK、I3C parity/T、I3C read T 或 I2C ACK/NACK  
@@ -144,7 +152,7 @@ D. 只有 ENTDAA 才存在第九位
 
 ### 14. Analysis FIFO
 
-`uvm_tlm_analysis_fifo` 在本项目中的主要价值是：
+`uvm_tlm_analysis_fifo` 在本项目中的主要价值是：A
 
 A. 将 analysis 广播转换为有缓存的消费者接口，使 scoreboard 可稍后 `get/try_get`  
 B. 自动比较 expected 和 actual  
@@ -153,7 +161,7 @@ D. 自动保证两个独立 FIFO 中事务一一对应
 
 ### 15. 多项选择：reset epoch
 
-本项目引入 `tb_reset_epoch` 的合理作用包括：
+本项目引入 `tb_reset_epoch` 的合理作用包括：A
 
 A. 软件复位未拉低 `rst_n` 时，也能中止 monitor/target/predictor 的旧事务  
 B. 防止复位前 expected 与复位后 actual 错配  
@@ -162,7 +170,7 @@ D. 规定复位与事务到达同一时隙时“复位优先”
 
 ### 16. 多项选择：覆盖率闭合
 
-下列做法有利于可信的 coverage closure：
+下列做法有利于可信的 coverage closure：C
 
 A. 将 X/Z、malformed 等 checker 错误全部作为必须命中的合法功能 bin  
 B. 建立 requirement—test—checker—coverpoint 映射  
@@ -173,11 +181,11 @@ D. 只运行一个 full-feature test，看到总覆盖率较高即可签核
 
 ### 17. Sequence-driver 握手
 
-sequence 侧典型调用顺序为 `________`、`________`；driver 侧对应为 `get_next_item()`、`________`。
+sequence 侧典型调用顺序为 `_start_item()_______`、`__finish_item()______`；driver 侧对应为 `get_next_item()`、`_item_done()_______`。
 
 ### 18. Config DB
 
-顶层使用 `uvm_config_db#(virtual i3c_if)::set(...)` 放入接口；component 通常在 `________ phase` 中使用相同的类型和 field name 调用 `________()` 取得接口。
+顶层使用 `uvm_config_db#(virtual i3c_if)::set(...)` 放入接口；component 通常在 `_build_______ phase` 中使用相同的类型和 field name 调用 `__uvm_config_db#(virtual i3c_if)::get_____()` 取得接口。
 
 ### 19. 当前工程的 expected 路径
 
@@ -185,7 +193,7 @@ sequence 侧典型调用顺序为 `________`、`________`；driver 侧对应为 
 
 ```text
 APB monitor ─┐
-             ├→ i3c_cmd_predictor → ________ → bus scoreboard
+             ├→ i3c_cmd_predictor → ___expected_____ → bus scoreboard
 target intent┘
 ```
 
@@ -194,16 +202,16 @@ target intent┘
 补全数据流：
 
 ```text
-SCL/SDA → ________ → i3c_bus_txn → bus_fifo → bus scoreboard
+SCL/SDA → _i3c_bus_monitor_______ → i3c_bus_txn → bus_fifo → bus scoreboard
 ```
 
 ### 21. Direct CCC
 
-Direct CCC 需要两个 target intent：第一条描述 `________` 地址阶段，第二条描述 Repeated START 后的 `________` 地址阶段。
+Direct CCC 需要两个 target intent：第一条描述 `__ccc命令______` 地址阶段，第二条描述 Repeated START 后的 `_目标从机_______` 地址阶段。
 
 ### 22. 随机回归复现
 
-本项目通过 `+ntb_random_seed=<seed>` 固定随机种子，通过 `+________=<n>` 控制随机迭代次数。
+本项目通过 `+ntb_random_seed=<seed>` 固定随机种子，通过 `+RAND_ITERS______=<n>` 控制随机迭代次数。
 
 ## 六、标准简答题（共 4 题，每题 6 分，共 24 分）
 
@@ -223,9 +231,13 @@ sequence / target sequence
 
 回答必须说明 expected payload 与 actual payload 分别从哪里来，以及为什么不能同源。
 
+expected 来自两个方向，一个是apb的指令和数据，一个是target的应答和数据，actual 来自dut 的scl和sda的实际表现。
+
 ### 24. Direct CCC 与 segment
 
 说明 Direct CCC 为什么在 `i3c_bus_txn` 中通常表现为两个 segment。写出两个 segment 的起止边界、header 和主要 data 内容，并说明 monitor 应根据什么事实将其分类为 Direct CCC。
+
+因为Direct CCC通常有两部分，每个部分都有新的地址和数据。第一个segment的起是START，结束是Repeat START，header是8{7'0x7f,W},然后收到1位地址ack，data是8位CCC命令和1位校验位，然后会收到1位ack，第二个segment的起是Repeat START，结束是STOP，header是8{7'0x7f,W/R},然后发射从机地址，收到地址ack后写数据或者接收数据。
 
 ### 25. 两类 scoreboard 输入方式
 
@@ -236,12 +248,20 @@ sequence / target sequence
 
 说明二者在调用方式、是否可阻塞、是否缓存，以及适用检查任务上的差异。
 
+imp阻塞，写了就会阻塞等待被接受，不会缓存，fifo不阻塞，会缓存
+
 ### 26. I3C read 与 legacy I2C read 的第九位
 
 分别说明：
 
 1. I3C SDR read 中 controller 和 target 如何共同决定 resolved T-bit；
+   
+   control可以通过Tbit来判断是不是要继续读，而target可以通过Tbit来决定是不是要继续发
+
 2. legacy I2C read 中最后一个 byte 的 ACK/NACK 由谁驱动；
+   
+   由control端
+
 3. 为什么只保存 resolved SDA 不足以判断驱动归属。
 
 ## 七、项目代码推演题（共 2 题，每题 8 分，共 16 分）
@@ -281,6 +301,8 @@ inject_parity_error   = 0
 ```
 
 回答：实际应写入多少个 TX byte、总线上会尝试发送多少个 data byte、预期 response `[1:0]` 是多少，并说明原因。
+
+实际写入2个tx byte，总线上会尝试发送5个data byte，
 
 #### 场景 B（4 分）
 
